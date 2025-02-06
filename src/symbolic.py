@@ -52,14 +52,14 @@ class EVM:
 
 	def get_item(self, n):
 		if len(self.stack) < abs(n):
-			return ConstantValue(0, 1337)
+			return ConstantValue(0, 1337, -1)
 		else:
 			return self.stack[n]
 
 	def pop_item(self):
 		if len(self.stack) > 0:
 			return self.stack.pop()
-		return ConstantValue(0, 1337)
+		return ConstantValue(0, 1337, -1)
 
 	def clone(self):
 		return deepcopy(self)

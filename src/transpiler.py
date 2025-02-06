@@ -58,20 +58,16 @@ def assert_compilation(bytecode):
 		file.write(output)
 
 	result = subprocess.run(["python3", "-m", "vyper.cli.venom_main", "debug.venom"], capture_output=True, text=True)
-	print("STDOUT:", result.stdout)
-	print("STDERR:", result.stderr)
-
+	assert result.returncode == 0
+	return bytes.fromhex(result.stdout.replace("0x", ""))
 
 if __name__ == "__main__":
 	programs = [
 		# https://www.evm.codes/playground?unit=Wei&codeType=Mnemonic&code=%27y1z0z0twwy2v32%200xsssszt%27~uuuuzv1%201y%2F%2F%20Example%20w%5CnvwPUSHuFFtwADDs~~%01stuvwyz~_
-	#	bytes.fromhex("604260005260206000F3"),
-
 		bytes.fromhex("6080604052348015600e575f80fd5b50600436106026575f3560e01c8063f8a8fd6d14602a575b5f80fd5b60306044565b604051603b91906062565b60405180910390f35b5f6001905090565b5f819050919050565b605c81604c565b82525050565b5f60208201905060735f8301846055565b9291505056")
 	]
 	for i in programs:
-		assert_compilation(i)
-
+		print(assert_compilation(i))
 
 
 
