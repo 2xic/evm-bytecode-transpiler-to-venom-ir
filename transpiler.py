@@ -3,6 +3,7 @@ from blocks import get_basic_blocks
 from ir_converter import execute_block
 from string import Template
 import subprocess
+from blocks import get_calling_blocks
 
 class Transpiler:
 	def __init__(self):
@@ -18,19 +19,19 @@ $new_blocks
 		self.variabl_counter = 0
 
 	def transpile(self, bytecode):
-		blocks = get_basic_blocks(get_opcodes_from_bytes(bytecode))
-		for i in blocks:
+		cfg = get_calling_blocks(get_opcodes_from_bytes(bytecode))
+		for i in cfg.blocks:
 			print(hex(i.start_offset))
 			for v in i.opcodes:
 				print("\t" + str(v))
-		get_next_block = lambda idx: blocks[idx] if idx < len(blocks)  else None
-		global_output = execute_block(blocks[0], get_next_block(1))
+		get_next_block = lambda idx: cfg.blocks[idx] if idx < len(cfg.blocks)  else None
+		global_output = execute_block(cfg.blocks[0]) #, get_next_block(1))
 		for index, i in enumerate(global_output):
 			global_output[index] = ("		" + i)
 
 		new_blocks = []
-		for index, block in enumerate(blocks[1:]):
-			block_ir = execute_block(block, get_next_block(index+2))
+		for index, block in enumerate(cfg.blocks[1:]):
+			block_ir = execute_block(block)
 			if len(block_ir) > 0:
 				block_ir[0] = ("	" + block_ir[0])
 				for index, i in enumerate(block_ir[1:]):

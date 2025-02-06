@@ -3,8 +3,9 @@ We need to convert the bytecode into basic blocks so that we can jump between th
 """
 from dataclasses import dataclass
 from opcodes import Opcode, PushOpcode, DupOpcode, SwapOpcode
-from symbolic import EVM, ConstantValue, SymbolicValue
+from symbolic import EVM, ConstantValue, SymbolicValue, SymbolicOpcode
 from typing import List, Set, Dict
+from copy import deepcopy
 
 @dataclass
 class BasicBlock:
@@ -22,7 +23,11 @@ class StackOpcode:
 @dataclass
 class CallGraphBlock(BasicBlock):
 	opcodes: List[Opcode]
+	# Each execution trace
+	exeuction_trace: List[List[SymbolicValue]]
+
 	outgoing: Set[int]
+
 
 @dataclass
 class CallGraph:
@@ -64,6 +69,7 @@ def get_basic_blocks(opcodes) -> List[Opcode]:
 	# TODO: need to add resolving of orphan blocks and also nested calls.
 	return list(filter(lambda x: len(x.opcodes) > 0, blocks))
 
+
 def get_calling_blocks(opcodes):
 	basic_blocks = get_basic_blocks(opcodes)
 	raw_blocks = []
@@ -71,6 +77,7 @@ def get_calling_blocks(opcodes):
 	for i in basic_blocks:
 		raw_blocks.append(CallGraphBlock(
 			opcodes=i.opcodes,
+			exeuction_trace=[],
 			outgoing=set([]),
 		))
 		lookup_blocks[i.start_offset] = raw_blocks[-1]
@@ -82,14 +89,15 @@ def get_calling_blocks(opcodes):
 		(block, evm) = blocks.pop()
 		if len(evm.stack) > 32:
 			continue
+		block.exeuction_trace.append([])
 		for opcode in block.opcodes:
-#			print(hex(opcode.pc) + ":  " + str(opcode))
-#			print("\t" + str(evm.stack))
-			#if opcode.pc == 0x4b:
-			#	print(evm.stack)
-			#	exit(0)
+			block.exeuction_trace[-1].append(deepcopy(evm.stack))
 			if isinstance(opcode, PushOpcode):
-				var = ConstantValue(0, opcode.value())
+				var = ConstantValue(
+					0, 
+					opcode.value(),
+					pc=opcode.pc,
+				)
 				evm.stack.append(var)
 				evm.step()
 			elif isinstance(opcode, DupOpcode):
@@ -126,10 +134,17 @@ def get_calling_blocks(opcodes):
 						(lookup_blocks[pc], evm.clone())
 					)
 			else:
+				inputs = []
 				for i in range(opcode.inputs):
-					evm.stack.pop()
+					inputs.append(evm.stack.pop())
 				for i in range(opcode.outputs):
-					evm.stack.append(SymbolicValue(-1))
+					evm.stack.append(
+						SymbolicOpcode(
+							opcode.name, 
+							inputs,
+							pc=opcode.pc,
+						)
+					)
 				evm.step()
 
 	return CallGraph(

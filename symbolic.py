@@ -5,8 +5,9 @@ from opcodes import PushOpcode, DupOpcode
 from copy import deepcopy
 
 class SymbolicValue:
-	def __init__(self, id):
+	def __init__(self, id, pc):
 		self.id = id
+		self.pc = pc
 		# TODO: this shouldn't really be used
 		self.value = 1337
 
@@ -16,9 +17,23 @@ class SymbolicValue:
 	def __repr__(self):
 		return self.__str__()
 
+
+class SymbolicOpcode(SymbolicValue):
+	def __init__(self, opcode, inputs, pc):
+		#self.id = id
+		self.opcode = opcode
+		self.inputs = inputs
+		self.pc = pc
+
+	def __str__(self):
+		return f"SymbolicOpcode({self.opcode}, {self.inputs})"
+
+	def __repr__(self):
+		return self.__str__()
+
 class ConstantValue(SymbolicValue):
-	def __init__(self, id, value):
-		super().__init__(id)
+	def __init__(self, id, value, pc):
+		super().__init__(id, pc)
 		self.value = value
 
 	def __str__(self):
