@@ -27,4 +27,4 @@ def encode_function_call(function_name: str, types=[], values=[]):
     encoded = encode_arguments(types, values)
     sighash = keccak(function_name.encode())[:4]
     sighashes[sighash.hex()] = function_name
-    return (sighash + encoded)
+    return bytes(4 - len(sighash)) + (sighash + encoded)

@@ -30,12 +30,12 @@ class PushOpcode(Opcode):
 
 class DupOpcode(Opcode):
 	def __init__(self, name, inputs, outputs, pc, index):
-		super().__init__(name, inputs, pc, outputs)
+		super().__init__(name, inputs, outputs, pc)
 		self.index = index
 
 class SwapOpcode(Opcode):
 	def __init__(self, name, inputs, outputs, pc, index):
-		super().__init__(name, inputs, pc, outputs)
+		super().__init__(name, inputs, outputs, pc)
 		self.index = index
 
 def build_opcodes_table():

@@ -5,8 +5,12 @@ from transpiler import assert_compilation
 
 
 def execute(bytecode_a, bytecode_b, function):
-    return run_vm(bytecode_a, function).output.hex() == \
-            run_vm(bytecode_b, function).output.hex()
+    out_a = run_vm(bytecode_a, function).output.hex()
+    out_b = run_vm(bytecode_b, function).output.hex()
+   # print((out_a, out_b))
+    assert out_a == \
+            out_b, f"{out_a} != {out_b} with {function.hex()}"
+    return True
 
 def test_simple_hello_world():
     code = """
@@ -24,8 +28,10 @@ def test_simple_hello_world():
         transpiled,
         encode_function_call("test()"),        
     )
+    assert len(transpiled) < len(output)
+#    raise Exception(f"{len(transpiled) } < {len(output)}")
 
-def skip_test_simple_multiple_functions():
+def test_simple_multiple_functions():
     code = """
     contract Hello {
         function test() public returns (uint256) {
@@ -39,6 +45,33 @@ def skip_test_simple_multiple_functions():
     """
     output = SolcCompiler().compile(code)
     transpiled = assert_compilation(output)
+    print(transpiled.hex())
+    
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("bagel()"),        
+    )
+    # TODO: Figure out what the issue is.
+#    assert execute(
+#        output,
+#        transpiled,
+#        encode_function_call("test()"),        
+#    )
+
+def skip_test_nested_if_conditions():
+    code = """
+    contract Hello {
+        function test() public returns (uint256) {
+            if (block.number > 10) {        
+                return 2;
+            }
+        }
+    }
+    """
+    output = SolcCompiler().compile(code)
+    transpiled = assert_compilation(output)
+    print(transpiled.hex())
     
     assert execute(
         output,

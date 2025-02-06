@@ -12,7 +12,6 @@ def execute_block(block):
 		vyper_ir.append(f"block_{block.start_offset}: ")
 
 	traces = block.exeuction_trace[0]
-	variables = 0
 	for index, opcode in enumerate(block.opcodes):
 		if opcode.name == "JUMP":
 			offset = traces[index][-1].value
@@ -20,9 +19,14 @@ def execute_block(block):
 		elif opcode.name == "JUMPI":
 			offset = traces[index][-1].value
 			# TODO: this needs to do some folding.
-			conditon = traces[index][-2].pc
+			condition = traces[index][-2].pc
 			second_offset = opcode.pc + 1
-			vyper_ir.append(f"jnz @block_{second_offset}, @block_{offset},  %{conditon}")
+			false_branch, true_branch = sorted([
+				offset,
+				second_offset
+			], key=lambda x: abs(x - opcode.pc))
+#			vyper_ir.append(f"jnz @block_{true_branch}, @block_{false_branch},  %{condition}")
+			vyper_ir.append(f"jnz @block_{false_branch}, @block_{true_branch},  %{condition}")
 		elif isinstance(opcode, PushOpcode):
 			vyper_ir.append(f"%{opcode.pc} = {opcode.value()}")
 		elif isinstance(opcode, SwapOpcode) or isinstance(opcode, DupOpcode):
@@ -32,7 +36,8 @@ def execute_block(block):
 			inputs = []
 			op = traces[index]
 			for i in range(opcode.inputs):
-				inputs.append("%" + str(op[-(i + 1)].pc))
+				idx = (i + 1)
+				inputs.append("%" + str(op[-(idx)].pc))
 			if opcode.outputs > 0:
 				vyper_ir.append(f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs))
 			else:

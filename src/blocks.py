@@ -40,7 +40,7 @@ def get_basic_blocks(opcodes) -> List[Opcode]:
 		"STOP",
 		"REVERT",
 	]
-	start_of_block_ocpodes = [
+	start_of_block_opcodes = [
 		"JUMPDEST"
 	]
 	blocks = []
@@ -55,7 +55,7 @@ def get_basic_blocks(opcodes) -> List[Opcode]:
 			current_block = BasicBlock(
 				opcodes=[]
 			)
-		elif i.name in start_of_block_ocpodes:
+		elif i.name in start_of_block_opcodes:
 			blocks.append(current_block)
 			# reset
 			current_block = BasicBlock(
