@@ -1,10 +1,11 @@
 
 
 class Opcode:
-	def __init__(self, name, inputs, outputs):
+	def __init__(self, name, inputs, outputs, pc):
 		self.name = name
 		self.inputs = inputs
 		self.outputs = outputs
+		self.pc = pc 
 
 	def __str__(self):
 		return self.name
@@ -13,9 +14,12 @@ class Opcode:
 		return self.__str__()
 
 class PushOpcode(Opcode):
-	def __init__(self, name, inputs, outputs, data):
-		super().__init__(name, inputs, outputs)
+	def __init__(self, name, inputs, outputs, pc, data):
+		super().__init__(name, inputs, outputs, pc)
 		self.data = data
+
+	def value(self):
+		return int(self.data.hex(), 16)
 
 	def __str__(self):
 		if len(self.data) > 0:
@@ -23,6 +27,16 @@ class PushOpcode(Opcode):
 			return f"{self.name} 0x{data}"
 		else:
 			return self.name
+
+class DupOpcode(Opcode):
+	def __init__(self, name, inputs, outputs, pc, index):
+		super().__init__(name, inputs, pc, outputs)
+		self.index = index
+
+class SwapOpcode(Opcode):
+	def __init__(self, name, inputs, outputs, pc, index):
+		super().__init__(name, inputs, pc, outputs)
+		self.index = index
 
 def build_opcodes_table():
 	opcodes = {
@@ -134,14 +148,22 @@ def get_opcodes_from_bytes(bytecode):
 		if "PUSH" in opcode["name"]:
 			size = opcode["opcode"] - 0x5F
 			if size == 0:
-				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], 0))
+				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index, bytes(1)))
 			else:
 				data = bytecode[bytecode_index+1:bytecode_index+1+size]
-				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], data))
+				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index,data))
 			bytecode_index += size
 			bytecode_index += 1
+		elif "SWAP" in opcode["name"]:
+			index = opcode["opcode"] - 0x8F
+			outputs.append(SwapOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index,index))
+			bytecode_index += 1
+		elif "DUP" in opcode["name"]:
+			index = opcode["opcode"] - 0x7F
+			outputs.append(DupOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index,index))
+			bytecode_index += 1
 		else:
-			outputs.append(Opcode(opcode["name"], opcode["inputs"], opcode["outputs"]))
+			outputs.append(Opcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index))
 			bytecode_index += 1
 	return outputs
 
