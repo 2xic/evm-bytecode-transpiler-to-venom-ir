@@ -1,6 +1,6 @@
 from opcodes import get_opcodes_from_bytes, PushOpcode
 from blocks import get_basic_blocks
-from symbolic import execute_block
+from ir_converter import execute_block
 from string import Template
 import subprocess
 

@@ -151,20 +151,24 @@ def get_opcodes_from_bytes(bytecode):
 				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index, bytes(1)))
 			else:
 				data = bytecode[bytecode_index+1:bytecode_index+1+size]
-				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index,data))
-			bytecode_index += size
-			bytecode_index += 1
+				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index, data))
+			bytecode_index += size + 1
 		elif "SWAP" in opcode["name"]:
 			index = opcode["opcode"] - 0x8F
-			outputs.append(SwapOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index,index))
+			outputs.append(SwapOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index, index))
 			bytecode_index += 1
 		elif "DUP" in opcode["name"]:
 			index = opcode["opcode"] - 0x7F
-			outputs.append(DupOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index,index))
+			outputs.append(DupOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index, index))
 			bytecode_index += 1
 		else:
 			outputs.append(Opcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index))
 			bytecode_index += 1
 	return outputs
+
+
+
+
+
 
 
