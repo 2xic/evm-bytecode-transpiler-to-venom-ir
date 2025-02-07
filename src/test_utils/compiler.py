@@ -5,11 +5,11 @@ class SolcCompiler:
 	def __init__(self):
 		pass
 		
-	def compile(self, file_content):
-		output = self._get_solidity_output(file_content)
+	def compile(self, file_content, via_ir=False):
+		output = self._get_solidity_output(file_content, via_ir)
 		return self._get_solc_bytecode(output, "main.sol")
 
-	def _get_solidity_output(self, file_content):
+	def _get_solidity_output(self, file_content, via_ir):
 		request = {
 				"language": "Solidity",
 				"sources": {
@@ -30,6 +30,7 @@ class SolcCompiler:
 					"metadata":{
 						"appendCBOR": False,
 					},
+					"viaIR": via_ir
 				}
 		}   
 		return solcx.compile_standard(

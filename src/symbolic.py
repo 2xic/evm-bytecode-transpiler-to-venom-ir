@@ -55,6 +55,20 @@ class EVM:
 			return ConstantValue(0, 1337, -1)
 		else:
 			return self.stack[n]
+		
+	def swap(self, n):
+		index_a = len(self.stack) - 1
+		index_b = index_a - n
+		stack = self.stack
+		assert index_a >= 0
+		assert index_b >= 0
+		stack[index_a], stack[index_b] = stack[index_b], stack[index_a]
+		return self
+	
+	def dup(self, n):
+		var_copy = self.get_item(-n)
+		self.stack.append(var_copy)
+		return self
 
 	def pop_item(self):
 		if len(self.stack) > 0:
@@ -63,3 +77,5 @@ class EVM:
 
 	def clone(self):
 		return deepcopy(self)
+
+

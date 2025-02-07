@@ -24,7 +24,7 @@ class StackOpcode:
 class CallGraphBlock(BasicBlock):
 	opcodes: List[Opcode]
 	# Each execution trace
-	exeuction_trace: List[List[SymbolicValue]]
+	execution_trace: List[List[SymbolicValue]]
 
 	outgoing: Set[int]
 
@@ -72,12 +72,12 @@ def get_basic_blocks(opcodes) -> List[Opcode]:
 
 def get_calling_blocks(opcodes):
 	basic_blocks = get_basic_blocks(opcodes)
-	raw_blocks = []
+	raw_blocks: List[CallGraphBlock] = []
 	lookup_blocks = {}
 	for i in basic_blocks:
 		raw_blocks.append(CallGraphBlock(
 			opcodes=i.opcodes,
-			exeuction_trace=[],
+			execution_trace=[],
 			outgoing=set([]),
 		))
 		lookup_blocks[i.start_offset] = raw_blocks[-1]
@@ -89,26 +89,23 @@ def get_calling_blocks(opcodes):
 		(block, evm) = blocks.pop()
 		if len(evm.stack) > 32:
 			continue
-		block.exeuction_trace.append([])
+		block.execution_trace.append([])
+		print(evm.stack, block)
 		for opcode in block.opcodes:
-			block.exeuction_trace[-1].append(deepcopy(evm.stack))
+			block.execution_trace[-1].append(deepcopy(evm.stack))
 			if isinstance(opcode, PushOpcode):
 				var = ConstantValue(
-					0, 
-					opcode.value(),
+					id=0, 
+					value=opcode.value(),
 					pc=opcode.pc,
 				)
 				evm.stack.append(var)
 				evm.step()
 			elif isinstance(opcode, DupOpcode):
-				var_copy = evm.get_item(-opcode.index)
-				evm.stack.append(var_copy)
+				evm.dup(opcode.index)
 				evm.step()
 			elif isinstance(opcode, SwapOpcode):
-				index_a = len(evm.stack) - 1
-				index_b = index_a - opcode.index
-				stack = evm.stack
-				stack[index_a], stack[index_b] = stack[index_b], stack[index_a]
+				evm.swap(opcode.index)
 				evm.step()
 			elif opcode.name == "JUMP":
 				next_offset = evm.pop_item()
@@ -117,15 +114,20 @@ def get_calling_blocks(opcodes):
 					blocks.append(
 						(lookup_blocks[next_offset.value], evm.clone())
 					)
+				else:
+					print(f"Cant resolve JUMP {next_offset}")
 				evm.step()
 			elif opcode.name == "JUMPI":
-				next_offset = evm.peek()
+				next_offset = evm.pop_item()
+				evm.pop_item()
 				evm.step()
 				if isinstance(next_offset, ConstantValue):
 					block.outgoing.add(next_offset.value)
 					blocks.append(
 						(lookup_blocks[next_offset.value], evm.clone())
 					)
+				else:
+					print(f"Cant resolve JUMPI {next_offset}")
 
 				pc = opcode.pc + 1
 				if pc in lookup_blocks:
@@ -146,6 +148,16 @@ def get_calling_blocks(opcodes):
 						)
 					)
 				evm.step()
+
+	"""
+	Prune out all nodes that are not in called.
+	"""
+	connections = {}
+	for i in raw_blocks:
+		for node_id in i.outgoing:
+			connections[i.start_offset] = True
+			connections[node_id] = True
+	#raw_blocks = list(filter(lambda x: x.start_offset in connections, raw_blocks))
 
 	return CallGraph(
 		blocks=raw_blocks,

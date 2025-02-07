@@ -10,8 +10,9 @@ def execute_block(block):
 	vyper_ir = []
 	if block.start_offset > 0 and len(block.opcodes) > 0:
 		vyper_ir.append(f"block_{block.start_offset}: ")
-
-	traces = block.exeuction_trace[0]
+	if len(block.execution_trace) == 0: 
+		return vyper_ir
+	traces = block.execution_trace[0]
 	for index, opcode in enumerate(block.opcodes):
 		if opcode.name == "JUMP":
 			offset = traces[index][-1].value
@@ -42,5 +43,6 @@ def execute_block(block):
 				vyper_ir.append(f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs))
 			else:
 				vyper_ir.append(f"{opcode.name.lower()} " + ",".join(inputs))
-
+	if len(vyper_ir) == 1:
+		vyper_ir.append(f"jmp @block_{block.start_offset + 1}")
 	return vyper_ir

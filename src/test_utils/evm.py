@@ -12,7 +12,7 @@ class SimpleChain(MiningChain):
 
 def run_vm(bytecode: bytes, data: bytes, storage={}, wei_value=0) -> ComputationAPI:
 	chain_db = AtomicDB()
-	genesis_header = BlockHeader(difficulty=1, block_number=0, gas_limit=21_000)
+	genesis_header = BlockHeader(difficulty=1, block_number=10, gas_limit=21_000)
 	chain = SimpleChain.from_genesis_header(chain_db, genesis_header)
 
 	# Use the VM to apply the message (this runs the bytecode)
