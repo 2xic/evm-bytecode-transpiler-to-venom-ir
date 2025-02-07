@@ -33,16 +33,17 @@ class CallGraphBlock(BasicBlock):
 class CallGraph:
 	blocks: Dict[str, CallGraphBlock]
 
+end_of_block_opcodes = [
+	"JUMP",
+	"JUMPI",
+	"STOP",
+	"REVERT",
+	"RETURN",
+]
+start_of_block_opcodes = [
+	"JUMPDEST"
+]
 def get_basic_blocks(opcodes) -> List[Opcode]:
-	end_of_block_opcodes = [
-		"JUMP",
-		"JUMPI",
-		"STOP",
-		"REVERT",
-	]
-	start_of_block_opcodes = [
-		"JUMPDEST"
-	]
 	blocks = []
 	current_block = BasicBlock(
 		opcodes=[]
@@ -90,8 +91,8 @@ def get_calling_blocks(opcodes):
 		if len(evm.stack) > 32:
 			continue
 		block.execution_trace.append([])
-		print(evm.stack, block)
-		for opcode in block.opcodes:
+		for index, opcode in enumerate(block.opcodes):
+			is_last_opcode = index == len(block.opcodes) - 1
 			block.execution_trace[-1].append(deepcopy(evm.stack))
 			if isinstance(opcode, PushOpcode):
 				var = ConstantValue(
@@ -147,6 +148,15 @@ def get_calling_blocks(opcodes):
 							pc=opcode.pc,
 						)
 					)
+				pc = opcode.pc
+				# The block will just fallthrough to the next block in this case.
+				if is_last_opcode and (pc + 1) in lookup_blocks and not opcode.name in end_of_block_opcodes:
+					blocks.append(
+						(lookup_blocks[pc + 1], evm.clone())
+					)
+					block.outgoing.add(pc + 1)
+					pass
+
 				evm.step()
 
 	"""

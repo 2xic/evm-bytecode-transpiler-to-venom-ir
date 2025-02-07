@@ -55,11 +55,11 @@ def test_simple_multiple_functions():
         encode_function_call("bagel()"),        
     )
     # TODO: Figure out what the issue is.
-#    assert execute(
-#        output,
-#        transpiled,
-#        encode_function_call("test()"),        
-#    )
+    #    assert execute(
+    #        output,
+    #        transpiled,
+    #        encode_function_call("test()"),        
+    #    )
 
 def test_nested_if_conditions():
     code = """
@@ -81,6 +81,74 @@ def test_nested_if_conditions():
         encode_function_call("test()"),        
     )
 
+    code = """
+    contract Hello {
+        function test() public returns (uint256) {
+            if (5 < 10) {        
+                return 2;
+            }
+            return 0;
+        }
+    }
+    """
+    output = SolcCompiler().compile(code)
+    transpiled = assert_compilation(output)
+    
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("test()"),        
+    )
+
+    code = """
+    contract Hello {
+        function test() public returns (uint256) {
+            return a(15);
+        }
+
+        function a(uint256 a) internal returns (uint256){
+            if (a > 10) {        
+                return 2;
+            }
+        }
+    }
+    """
+    output = SolcCompiler().compile(code)
+    transpiled = assert_compilation(output)
+    
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("test()"),        
+    )
+
+    code = """
+    contract Hello {
+        function test() public returns (uint256) {
+            return a(15);
+        }
+
+        function fest() public returns (uint256) {
+            return a(5);
+        }
+
+        function a(uint256 a) internal returns (uint256){
+            if (a > 10) {        
+                return 2;
+            }
+        }
+    }
+    """
+    output = SolcCompiler().compile(code)
+    transpiled = assert_compilation(output)
+    
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("test()"),        
+    )
+
+
 def skip_test_conditions():
     code = """
     contract Hello {
@@ -99,6 +167,34 @@ def skip_test_conditions():
         output,
         transpiled,
         encode_function_call("test()"),        
+    )
+    assert len(transpiled) < len(output)
+
+def test_multiple_functions():
+    code = """
+    contract Hello {
+        function test() public returns (uint256) {
+            return block.timestamp;
+        }
+
+        function fest() public returns (uint256) {
+            return block.number;
+        }
+    }
+    """
+    output = SolcCompiler().compile(code)
+    transpiled = assert_compilation(output)
+    
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("test()"),        
+    )
+    assert len(transpiled) < len(output)
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("fest()"),        
     )
     assert len(transpiled) < len(output)
 

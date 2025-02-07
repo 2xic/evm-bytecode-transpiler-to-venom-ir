@@ -3,6 +3,7 @@ We need a small symbolic EVM to be able to handle the lookups
 """
 from opcodes import PushOpcode, DupOpcode
 from copy import deepcopy
+import random
 
 class SymbolicValue:
 	def __init__(self, id, pc):
@@ -20,6 +21,7 @@ class SymbolicValue:
 
 class SymbolicOpcode(SymbolicValue):
 	def __init__(self, opcode, inputs, pc):
+		super().__init__(random.randint(0, 256), pc)
 		#self.id = id
 		self.opcode = opcode
 		self.inputs = inputs
@@ -37,7 +39,7 @@ class ConstantValue(SymbolicValue):
 		self.value = value
 
 	def __str__(self):
-		return f"ConstantValue({hex(self.value)})"
+		return f"ConstantValue({hex(self.value)})"	
 
 class EVM:
 	def __init__(self, pc):
