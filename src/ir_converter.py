@@ -4,43 +4,56 @@ from string import Template
 from typing import List
 from collections import defaultdict
 import hashlib
+from copy import deepcopy
 
 """
 We iterate over tbe opcodes in the block to get a sense of where the variables are allocated.
 """
 
+def get_block_name(target, trace_id):
+	return f"@block_{target}_{trace_id}"
+
 class JmpInstruction:
-	def __init__(self, target):
+	def __init__(self, target, trace_id):
 		self.target = target
+		self.trace_id = trace_id
+		self.trace_id = trace_id
 
 	def __str__(self):
-		return f"jmp @block_{self.target}"
+		block = get_block_name(self.target, self.trace_id)
+		return f"jmp {block}"
 
 	def __repr__(self):
 		return self.__str__()
 
 
 class ConditionalJumpInstruction:
-	def __init__(self, false_branch, true_branch, condition):
+	def __init__(self, false_branch, true_branch, condition, trace_id):
 		self.false_branch = false_branch
 		self.true_branch = true_branch
 		self.condition = condition
+		self.trace_id = trace_id
 
 	def __str__(self):
-		return f"jnz @block_{self.false_branch}, @block_{self.true_branch},  %{self.condition}"
+		false_block = get_block_name(self.false_branch, self.trace_id)
+		true_block = get_block_name(self.true_branch, self.trace_id)
+		return f"jnz {false_block}, {true_block},  %{self.condition}"
 
 	def __repr__(self):
 		return self.__str__()
 	
 
 class VyperIRBlock:
-	def __init__(self, block, vyper_ir):
+	def __init__(self, block, vyper_ir, trace_id):
 		self.offset = block.start_offset
 		if block.start_offset > 0 and len(block.opcodes) > 0:
-			self.name = (f"block_{self.offset}: ")
+			self.base_name = get_block_name(self.offset, trace_id)
+			block_name = self.base_name[1:]
+			self.name = (f"{block_name}: ")
 		else:
+			self.base_name = "-1"
 			self.name = ("global:")
-
+		self.block = block
 		self.instructions = vyper_ir
 
 	def __hash__(self):
@@ -118,91 +131,132 @@ def optimize_ir_duplicate_blocks(blocks: List[VyperIRBlock]):
 	return blocks
 
 def optimize_ir(blocks: List[VyperIRBlock]):
-	return optimize_ir_duplicate_blocks(optimize_ir_jumps(blocks))
+# 	TODO: Re-enable
+#	return optimize_ir_duplicate_blocks(optimize_ir_jumps(blocks))
+#	return optimize_ir_jumps(blocks)
+	return blocks
+
+def create_missing_blocks(blocks: List[VyperIRBlock]):
+	lookup_blocks = {}
+	for i in blocks:
+		lookup_blocks[i.base_name] = i
+	for block in blocks:
+		for instructions in block.instructions:
+			if isinstance(instructions, JmpInstruction):
+				base_name = get_block_name(instructions.target, instructions.trace_id)
+				if base_name not in lookup_blocks:
+					base_name = get_block_name(instructions.target, 0)
+					print((base_name))
+					reference_block = deepcopy(lookup_blocks[base_name])
+					base_block = VyperIRBlock(
+						reference_block.block,
+						reference_block.instructions,
+						instructions.trace_id,
+					)
+					blocks.append(base_block)
+					lookup_blocks[base_name] = base_block
+	return blocks
 
 global_variables = {}
 
-def execute_block(block, next_block):
-	vyper_ir = []
+def find_trace_id(current_block, executions):
+	for idx, i in enumerate(executions):
+		print(i, i.parent_block, current_block)
+		if i.parent_block == current_block:
+			return idx
+	assert i.parent_block is None, "SOmething is wrong"
+	return 0
+	
+def execute_block(current_block, next_block, all_blocks):
+	# This block was never reached.
+	if len(current_block.execution_trace) == 0: 
+		return []
 
-	if len(block.execution_trace) == 0: 
-		return vyper_ir
-	traces = block.execution_trace[0]
+	# Trace ids should be based on the connection from the parent
+	# parent block -> child block = trace id ? 
+	# No, that won't work as you might have had some more deeply nested paths.
+	# I think we need to set the trace id based on each split in the execution tbh so each split in execution
+	# will increment the trace id. 
 
-	has_block_ended = False
-	local_variables = {}
-	values = list(set([
-		i[0][-1].id
-		for i in block.execution_trace if len(i[0]) > 0
-	]))
-	# If the values are greater than
-	if len(values) > 1:
-		print("Multiple values used at this execution, might cause mismatch in execution :)")
-		print(values)
+	# Selects the first trace, this won't be correct in cases where blocks are being splitted out ... 
+	vyper_blocks = []
+	for trace_id in range(len(current_block.execution_trace)):
+		vyper_ir = []
+		traces = current_block.execution_trace[trace_id]
 
-	for index, opcode in enumerate(block.opcodes):
-		# assert len(list(set(values))) <= 1
-		# TODO: Ideally we here have the phi function, but that doesn't seem to work well.
-
-		if opcode.name == "JUMP":
-			offset = traces[index][-1].value
-			vyper_ir.append(JmpInstruction(offset))
-			has_block_ended = True
-		elif opcode.name == "JUMPI":
-			offset = traces[index][-1].value
-			# TODO: this needs to do some folding.
-			condition = traces[index][-2].pc
-			second_offset = opcode.pc + 1
-			false_branch, true_branch = sorted([
-				offset,
-				second_offset
-			], key=lambda x: abs(x - opcode.pc))
-			vyper_ir.append(ConditionalJumpInstruction(
-				false_branch,
-				true_branch,
-				condition,
-			))
-			has_block_ended = True
-		elif isinstance(opcode, PushOpcode):
-			#vyper_ir.append(f"%{opcode.pc} = {opcode.value()}")
-			pass
-		elif isinstance(opcode, SwapOpcode) or isinstance(opcode, DupOpcode):
-			pass
-		elif opcode.name not in ["JUMPDEST", "POP"]:
-			inputs = []
-			op = traces[index]
-			for i in range(opcode.inputs):
-				idx = (i + 1)
-				current_op = op[-(idx)]
-				# If it is a direct op, we can just use it inplace.
-				if isinstance(current_op, ConstantValue):
-					inputs.append(str(current_op.value))
-				elif current_op.pc in local_variables:
-					inputs.append("%" + str(current_op.pc))
-				elif current_op.pc in global_variables:
-					vyper_ir.append(global_variables[current_op.pc])
-					inputs.append("%" + str(current_op.pc))
-				else:
-					#print(current_op.pc)
-					#print(local_variables)
-					#print(global_variables)
-					#print(vyper_ir)
-					#raise Exception("hm?", current_op.pc)
-					inputs.append("%" + str(current_op.pc))
-					#else:
-					#	print(global_variables)
-					#	vyper_ir.append(global_variables[opcode.pc])
-					#	inputs.append("%" + str(current_op.pc))
-			if opcode.outputs > 0:
-				vyper_ir.append(f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs))
-				global_variables[opcode.pc] = f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs)
-				local_variables[opcode.pc] = global_variables[opcode.pc]
-			#	print(global_variables)
-			else:
-				vyper_ir.append(f"{opcode.name.lower()} " + ",".join(inputs))
-			if opcode.name in ["RETURN", "REVERT", "JUMP"]:
+		has_block_ended = False
+		local_variables = {}
+		# If the values are greater than
+		if len(current_block.incoming) > 1:
+			print(f"Block: {hex(current_block.start_offset)}, Parent blocks {list(map(hex, current_block.incoming))}")
+			print("Multiple values used at this execution, might cause mismatch in execution :)")
+			print("")
+		# So to handle the difference in trace, I think we should have a concept of trace ids ...
+		# We jump to different traces depending on the execution. 
+		for index, opcode in enumerate(current_block.opcodes):
+			# assert len(list(set(values))) <= 1
+			# TODO: Ideally we here have the phi function, but that doesn't seem to work well.
+			if opcode.name == "JUMP":
+				offset = traces.executions[index][-1].value
+				print(offset, all_blocks.keys())
+				#local_trace_id = trace_id if trace_id < len(all_blocks[offset].execution_trace) else 0
+				#print((trace_id, all_blocks[offset].execution_trace))
+				local_trace_id = max(
+					find_trace_id(current_block.start_offset, all_blocks[offset].execution_trace),
+					trace_id
+				)
+				vyper_ir.append(JmpInstruction(offset, local_trace_id))
 				has_block_ended = True
-#	print(vyper_ir)
-	if not has_block_ended:
-		vyper_ir.append(JmpInstruction(next_block.start_offset))
-	return VyperIRBlock(block, vyper_ir)
+			elif opcode.name == "JUMPI":
+				offset = traces.executions[index][-1].value
+				# TODO: this needs to do some folding.
+				condition = traces.executions[index][-2].pc
+				second_offset = opcode.pc + 1
+				false_branch, true_branch = sorted([
+					offset,
+					second_offset
+				], key=lambda x: abs(x - opcode.pc))
+				local_trace_id = 0 # find_trace_id(current_block.start_offset, all_blocks[offset].execution_trace)
+				vyper_ir.append(ConditionalJumpInstruction(
+					false_branch,
+					true_branch,
+					condition, 
+					local_trace_id,
+				))
+				has_block_ended = True
+			elif isinstance(opcode, PushOpcode):
+				pass
+			elif isinstance(opcode, SwapOpcode) or isinstance(opcode, DupOpcode):
+				pass
+			elif opcode.name not in ["JUMPDEST", "POP"]:
+				inputs = []
+				op = traces.executions[index]
+				for i in range(opcode.inputs):
+					idx = (i + 1)
+					current_op = op[-(idx)]
+					# If it is a direct op, we can just use it inplace.
+					if isinstance(current_op, ConstantValue):
+						inputs.append(str(current_op.value))
+					elif current_op.pc in local_variables:
+						inputs.append("%" + str(current_op.pc))
+					elif current_op.pc in global_variables:
+						vyper_ir.append(global_variables[current_op.pc])
+						inputs.append("%" + str(current_op.pc))
+					else:
+						inputs.append("%" + str(current_op.pc))
+				if opcode.outputs > 0:
+					vyper_ir.append(f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs))
+					global_variables[opcode.pc] = f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs)
+					local_variables[opcode.pc] = global_variables[opcode.pc]
+				else:
+					vyper_ir.append(f"{opcode.name.lower()} " + ",".join(inputs))
+				if opcode.name in ["RETURN", "REVERT", "JUMP"]:
+					has_block_ended = True
+		if not has_block_ended:
+			local_trace_id = max(
+				find_trace_id(current_block.start_offset, all_blocks[next_block.start_offset].execution_trace),
+				trace_id
+			)
+			vyper_ir.append(JmpInstruction(next_block.start_offset, local_trace_id))
+		vyper_blocks.append(VyperIRBlock(current_block, vyper_ir, trace_id))
+	return vyper_blocks

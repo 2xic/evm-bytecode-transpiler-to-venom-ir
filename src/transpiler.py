@@ -1,6 +1,5 @@
-from opcodes import get_opcodes_from_bytes, PushOpcode
-from blocks import get_basic_blocks
-from ir_converter import execute_block, VyperIRBlock, optimize_ir
+from opcodes import get_opcodes_from_bytes
+from ir_converter import execute_block, optimize_ir, create_missing_blocks
 from string import Template
 import subprocess
 from blocks import get_calling_blocks
@@ -21,13 +20,12 @@ $blocks
 		get_next_block = lambda idx: cfg.blocks[idx] if idx < len(cfg.blocks)  else None
 		blocks = []
 		for index, block in enumerate(cfg.blocks):
-			block_ir = execute_block(block, get_next_block(index + 1))
-			blocks.append(block_ir)
+			blocks += execute_block(block, get_next_block(index + 1), cfg.blocks_lookup)
+		blocks = create_missing_blocks(blocks)
 		blocks = optimize_ir(blocks)
 		return self.template.safe_substitute(
 			blocks="\n".join(list(map(str, blocks)))
 		)
-
 
 def assert_compilation(bytecode):
 	output = Transpiler().transpile(

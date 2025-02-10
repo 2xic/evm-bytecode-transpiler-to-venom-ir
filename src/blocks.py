@@ -4,7 +4,7 @@ We need to convert the bytecode into basic blocks so that we can jump between th
 from dataclasses import dataclass
 from opcodes import Opcode, PushOpcode, DupOpcode, SwapOpcode
 from symbolic import EVM, ConstantValue, SymbolicValue, SymbolicOpcode
-from typing import List, Set, Dict
+from typing import List, Set, Dict, Optional
 from copy import deepcopy
 
 @dataclass
@@ -21,17 +21,23 @@ class StackOpcode:
 	values: Set[int]
 
 @dataclass
+class ExecutionTrace:
+	parent_block: Optional[int]
+	executions: List[SymbolicOpcode]
+
+@dataclass
 class CallGraphBlock(BasicBlock):
 	opcodes: List[Opcode]
 	# Each execution trace
-	execution_trace: List[List[SymbolicValue]]
+	execution_trace: List[ExecutionTrace]
 
 	outgoing: Set[int]
-
+	incoming: Set[int]
 
 @dataclass
 class CallGraph:
-	blocks: Dict[str, CallGraphBlock]
+	blocks: List[CallGraphBlock]
+	blocks_lookup: Dict[str, CallGraphBlock]
 
 end_of_block_opcodes = [
 	"JUMP",
@@ -74,26 +80,35 @@ def get_basic_blocks(opcodes) -> List[Opcode]:
 def get_calling_blocks(opcodes):
 	basic_blocks = get_basic_blocks(opcodes)
 	raw_blocks: List[CallGraphBlock] = []
+	# Parent -> Child block: trace id
+	block_connections: Dict[str, int] = {}
 	lookup_blocks = {}
 	for i in basic_blocks:
 		raw_blocks.append(CallGraphBlock(
 			opcodes=i.opcodes,
 			execution_trace=[],
 			outgoing=set([]),
+			incoming=set([]),
 		))
 		lookup_blocks[i.start_offset] = raw_blocks[-1]
 
 	blocks = [
-		(lookup_blocks[0], EVM(pc=0))
+		(lookup_blocks[0], EVM(pc=0), None)
 	]
 	while len(blocks) > 0:
-		(block, evm) = blocks.pop()
+		(block, evm, parent_block) = blocks.pop()
 		if len(evm.stack) > 32:
 			continue
-		block.execution_trace.append([])
+		if parent_block is not None:
+			block.incoming.add(parent_block.start_offset)
+		current_execution_trace = ExecutionTrace(
+			parent_block=(parent_block.start_offset if parent_block is not None else None),
+			executions=[],
+		)
+		block.execution_trace.append(current_execution_trace)
 		for index, opcode in enumerate(block.opcodes):
 			is_last_opcode = index == len(block.opcodes) - 1
-			block.execution_trace[-1].append(deepcopy(evm.stack))
+			current_execution_trace.executions.append(deepcopy(evm.stack))
 			if isinstance(opcode, PushOpcode):
 				var = ConstantValue(
 					id=0, 
@@ -113,7 +128,7 @@ def get_calling_blocks(opcodes):
 				if isinstance(next_offset, ConstantValue):
 					block.outgoing.add(next_offset.value)
 					blocks.append(
-						(lookup_blocks[next_offset.value], evm.clone())
+						(lookup_blocks[next_offset.value], evm.clone(), block)
 					)
 				else:
 					print(f"Cant resolve JUMP {next_offset}")
@@ -125,7 +140,7 @@ def get_calling_blocks(opcodes):
 				if isinstance(next_offset, ConstantValue):
 					block.outgoing.add(next_offset.value)
 					blocks.append(
-						(lookup_blocks[next_offset.value], evm.clone())
+						(lookup_blocks[next_offset.value], evm.clone(), block)
 					)
 				else:
 					print(f"Cant resolve JUMPI {next_offset}")
@@ -134,7 +149,7 @@ def get_calling_blocks(opcodes):
 				if pc in lookup_blocks:
 					block.outgoing.add(pc)
 					blocks.append(
-						(lookup_blocks[pc], evm.clone())
+						(lookup_blocks[pc], evm.clone(), block)
 					)
 			else:
 				inputs = []
@@ -152,7 +167,7 @@ def get_calling_blocks(opcodes):
 				# The block will just fallthrough to the next block in this case.
 				if is_last_opcode and (pc + 1) in lookup_blocks and not opcode.name in end_of_block_opcodes:
 					blocks.append(
-						(lookup_blocks[pc + 1], evm.clone())
+						(lookup_blocks[pc + 1], evm.clone(), block)
 					)
 					block.outgoing.add(pc + 1)
 					pass
@@ -168,9 +183,13 @@ def get_calling_blocks(opcodes):
 			connections[i.start_offset] = True
 			connections[node_id] = True
 	#raw_blocks = list(filter(lambda x: x.start_offset in connections, raw_blocks))
+	blocks_lookup = {}
+	for i in raw_blocks:
+		blocks_lookup[i.start_offset] = i
 
 	return CallGraph(
 		blocks=raw_blocks,
+		blocks_lookup=blocks_lookup,
 	)
 
 

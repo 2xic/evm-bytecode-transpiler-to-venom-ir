@@ -55,11 +55,11 @@ def test_simple_multiple_functions():
         encode_function_call("bagel()"),        
     )
     # TODO: Figure out what the issue is.
-    #    assert execute(
-    #        output,
-    #        transpiled,
-    #        encode_function_call("test()"),        
-    #    )
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("test()"),        
+    )
 
 def test_nested_if_conditions():
     code = """
@@ -149,7 +149,7 @@ def test_nested_if_conditions():
     )
 
 
-def skip_test_conditions():
+def test_conditions():
     code = """
     contract Hello {
         function test() public returns (uint256) {
