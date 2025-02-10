@@ -20,8 +20,8 @@ class SymbolicValue:
 
 
 class SymbolicOpcode(SymbolicValue):
-	def __init__(self, opcode, inputs, pc):
-		super().__init__(random.randint(0, 256), pc)
+	def __init__(self, id, opcode, inputs, pc):
+		super().__init__(id, pc)
 		#self.id = id
 		self.opcode = opcode
 		self.inputs = inputs
@@ -45,6 +45,7 @@ class EVM:
 	def __init__(self, pc):
 		self.stack = []
 		self.pc = pc
+		self.trace_id = 0
 
 	def step(self):
 		self.pc += 1

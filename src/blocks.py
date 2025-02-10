@@ -3,9 +3,8 @@ We need to convert the bytecode into basic blocks so that we can jump between th
 """
 from dataclasses import dataclass
 from opcodes import Opcode, PushOpcode, DupOpcode, SwapOpcode
-from symbolic import EVM, ConstantValue, SymbolicValue, SymbolicOpcode
+from symbolic import EVM, ConstantValue, SymbolicOpcode
 from typing import List, Set, Dict, Optional
-from copy import deepcopy
 
 @dataclass
 class BasicBlock:
@@ -13,7 +12,7 @@ class BasicBlock:
 
 	@property	
 	def start_offset(self):
-		return self.opcodes[0].pc #+ 1
+		return self.opcodes[0].pc
 
 @dataclass
 class StackOpcode:
@@ -54,7 +53,7 @@ def get_basic_blocks(opcodes) -> List[Opcode]:
 	current_block = BasicBlock(
 		opcodes=[]
 	)
-	for index, i in enumerate(opcodes):
+	for _, i in enumerate(opcodes):
 		if i.name in end_of_block_opcodes:
 			current_block.opcodes.append(i)
 			# reset
@@ -80,8 +79,7 @@ def get_basic_blocks(opcodes) -> List[Opcode]:
 def get_calling_blocks(opcodes):
 	basic_blocks = get_basic_blocks(opcodes)
 	raw_blocks: List[CallGraphBlock] = []
-	# Parent -> Child block: trace id
-	block_connections: Dict[str, int] = {}
+	variable_counter = 0
 	lookup_blocks = {}
 	for i in basic_blocks:
 		raw_blocks.append(CallGraphBlock(
@@ -96,7 +94,7 @@ def get_calling_blocks(opcodes):
 		(lookup_blocks[0], EVM(pc=0), None)
 	]
 	while len(blocks) > 0:
-		(block, evm, parent_block) = blocks.pop()
+		(block, evm, parent_block) = blocks.pop(0)
 		if len(evm.stack) > 32:
 			continue
 		if parent_block is not None:
@@ -108,13 +106,14 @@ def get_calling_blocks(opcodes):
 		block.execution_trace.append(current_execution_trace)
 		for index, opcode in enumerate(block.opcodes):
 			is_last_opcode = index == len(block.opcodes) - 1
-			current_execution_trace.executions.append(deepcopy(evm.stack))
+			current_execution_trace.executions.append(evm.clone().stack)
 			if isinstance(opcode, PushOpcode):
 				var = ConstantValue(
-					id=0, 
+					id=variable_counter, 
 					value=opcode.value(),
 					pc=opcode.pc,
 				)
+				variable_counter += 1
 				evm.stack.append(var)
 				evm.step()
 			elif isinstance(opcode, DupOpcode):
@@ -158,11 +157,14 @@ def get_calling_blocks(opcodes):
 				for i in range(opcode.outputs):
 					evm.stack.append(
 						SymbolicOpcode(
-							opcode.name, 
-							inputs,
+							id=variable_counter,
+							opcode=opcode.name, 
+							inputs=inputs,
 							pc=opcode.pc,
 						)
 					)
+					variable_counter += 1
+				# ^Not set here, but used in ir converter
 				pc = opcode.pc
 				# The block will just fallthrough to the next block in this case.
 				if is_last_opcode and (pc + 1) in lookup_blocks and not opcode.name in end_of_block_opcodes:
@@ -182,7 +184,8 @@ def get_calling_blocks(opcodes):
 		for node_id in i.outgoing:
 			connections[i.start_offset] = True
 			connections[node_id] = True
-	#raw_blocks = list(filter(lambda x: x.start_offset in connections, raw_blocks))
+	raw_blocks = list(filter(lambda x: x.start_offset in connections, raw_blocks))
+	
 	blocks_lookup = {}
 	for i in raw_blocks:
 		blocks_lookup[i.start_offset] = i

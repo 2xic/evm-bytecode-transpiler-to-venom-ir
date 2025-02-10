@@ -19,11 +19,16 @@ def create_cfg(bytecode, name="cfg.png"):
 
 if __name__ == "__main__":
 	code = """
-    contract Hello {
-        function test() public returns (uint256) {
-            if (block.number > 10) {        
-                return 2;
-            }
+    contract SimpleMapping {
+        mapping(address => mapping(address => bool)) public mappings;
+
+        function setResults(address value) public returns(address) {
+            mappings[address(0)][value] = true;
+            return value;
+        }
+
+        function getResults(address value) public returns (bool) {
+            return mappings[address(0)][value];
         }
     }
 	"""

@@ -142,28 +142,28 @@ def build_opcodes_table():
 def get_opcodes_from_bytes(bytecode):
 	opcodes = build_opcodes_table()
 	outputs = []
-	bytecode_index = 0
-	while bytecode_index < len(bytecode):
-		opcode = opcodes[bytecode[bytecode_index]]
+	instruction_pointer = 0
+	while instruction_pointer < len(bytecode):
+		opcode = opcodes[bytecode[instruction_pointer]]
 		if "PUSH" in opcode["name"]:
 			size = opcode["opcode"] - 0x5F
 			if size == 0:
-				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index, bytes(1)))
+				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], instruction_pointer, bytes(1)))
 			else:
-				data = bytecode[bytecode_index+1:bytecode_index+1+size]
-				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index, data))
-			bytecode_index += size + 1
+				data = bytecode[instruction_pointer+1:instruction_pointer+1+size]
+				outputs.append(PushOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], instruction_pointer, data))
+			instruction_pointer += size + 1
 		elif "SWAP" in opcode["name"]:
 			index = opcode["opcode"] - 0x8F
-			outputs.append(SwapOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index, index))
-			bytecode_index += 1
+			outputs.append(SwapOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], instruction_pointer, index))
+			instruction_pointer += 1
 		elif "DUP" in opcode["name"]:
 			index = opcode["opcode"] - 0x7F
-			outputs.append(DupOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index, index))
-			bytecode_index += 1
+			outputs.append(DupOpcode(opcode["name"], opcode["inputs"], opcode["outputs"], instruction_pointer, index))
+			instruction_pointer += 1
 		else:
-			outputs.append(Opcode(opcode["name"], opcode["inputs"], opcode["outputs"], bytecode_index))
-			bytecode_index += 1
+			outputs.append(Opcode(opcode["name"], opcode["inputs"], opcode["outputs"], instruction_pointer))
+			instruction_pointer += 1
 	return outputs
 
 

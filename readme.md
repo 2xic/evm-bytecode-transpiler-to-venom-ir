@@ -23,4 +23,4 @@ python3 -m vyper.cli.venom_main
 - https://en.wikipedia.org/wiki/Static_single-assignment_form
 - https://x.com/harkal/status/1870054989990666584
 - https://www.trailofbits.com/documents/RattleRecon.pdf
-- 
+- https://github.com/vyperlang/vyper/blob/master/vyper/venom/README.md
