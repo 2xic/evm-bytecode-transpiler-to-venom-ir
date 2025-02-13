@@ -1,7 +1,7 @@
 ## Setup
 ```bash
 git clone https://github.com/vyperlang/vyper
-git checkout 537313b0dd47b3c086fa46d1ef7d8282101fa128
+git checkout c75a2da09aeaa49444c4a9d3489b0557a829862b
 
 pip3 install -e .
 

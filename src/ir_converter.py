@@ -37,7 +37,7 @@ class ConditionalJumpInstruction:
 	def __str__(self):
 		false_block = get_block_name(self.false_branch, self.trace_id)
 		true_block = get_block_name(self.true_branch, self.trace_id)
-		return f"jnz {false_block}, {true_block},  %{self.condition}"
+		return f"jnz %{self.condition}, {true_block}, {false_block}"
 
 	def __repr__(self):
 		return self.__str__()

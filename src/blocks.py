@@ -4,7 +4,8 @@ We need to convert the bytecode into basic blocks so that we can jump between th
 from dataclasses import dataclass
 from opcodes import Opcode, PushOpcode, DupOpcode, SwapOpcode
 from symbolic import EVM, ConstantValue, SymbolicOpcode
-from typing import List, Set, Dict, Optional
+from typing import List, Set, Dict, Optional, Any
+from copy import deepcopy
 
 @dataclass
 class BasicBlock:
@@ -22,7 +23,9 @@ class StackOpcode:
 @dataclass
 class ExecutionTrace:
 	parent_block: Optional[int]
-	executions: List[SymbolicOpcode]
+	executions: List[List[SymbolicOpcode]]
+	opcodes: List[List[Any]]
+	parent_trace_id: int
 
 @dataclass
 class CallGraphBlock(BasicBlock):
@@ -79,7 +82,7 @@ def get_basic_blocks(opcodes) -> List[Opcode]:
 def get_calling_blocks(opcodes):
 	basic_blocks = get_basic_blocks(opcodes)
 	raw_blocks: List[CallGraphBlock] = []
-	variable_counter = 0
+	variable_counter = 1
 	lookup_blocks = {}
 	for i in basic_blocks:
 		raw_blocks.append(CallGraphBlock(
@@ -101,19 +104,23 @@ def get_calling_blocks(opcodes):
 			block.incoming.add(parent_block.start_offset)
 		current_execution_trace = ExecutionTrace(
 			parent_block=(parent_block.start_offset if parent_block is not None else None),
+			parent_trace_id=(len(lookup_blocks[parent_block.start_offset].execution_trace) if parent_block is not None else 1),
 			executions=[],
+			opcodes=[]
 		)
 		block.execution_trace.append(current_execution_trace)
 		for index, opcode in enumerate(block.opcodes):
 			is_last_opcode = index == len(block.opcodes) - 1
 			current_execution_trace.executions.append(evm.clone().stack)
+			current_execution_trace.opcodes.append(deepcopy(opcode))
+		#	setattr(current_execution_trace.opcodes[-1], "id", -1)
+
 			if isinstance(opcode, PushOpcode):
 				var = ConstantValue(
 					id=variable_counter, 
 					value=opcode.value(),
 					pc=opcode.pc,
 				)
-				variable_counter += 1
 				evm.stack.append(var)
 				evm.step()
 			elif isinstance(opcode, DupOpcode):
@@ -163,8 +170,10 @@ def get_calling_blocks(opcodes):
 							pc=opcode.pc,
 						)
 					)
+					assert opcode.outputs == 1
+				if (opcode.outputs) > 0:
+					setattr(current_execution_trace.opcodes[-1], "id", variable_counter)
 					variable_counter += 1
-				# ^Not set here, but used in ir converter
 				pc = opcode.pc
 				# The block will just fallthrough to the next block in this case.
 				if is_last_opcode and (pc + 1) in lookup_blocks and not opcode.name in end_of_block_opcodes:

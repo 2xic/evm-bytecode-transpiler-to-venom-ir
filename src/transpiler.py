@@ -12,8 +12,7 @@ class Transpiler:
 function global {
 $blocks
 }
-[data]
-		""")
+""")
 
 	def transpile(self, bytecode):
 		cfg = get_calling_blocks(get_opcodes_from_bytes(bytecode))
