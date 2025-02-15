@@ -1,13 +1,13 @@
 from test_utils.compiler import SolcCompiler
-from test_utils.evm import run_vm
+from test_utils.evm import execute_function
 from test_utils.abi import encode_function_call
 from transpiler import assert_compilation
 from symbolic import EVM
 
 
 def execute(bytecode_a, bytecode_b, function):
-    out_a = run_vm(bytecode_a, function).output.hex()
-    out_b = run_vm(bytecode_b, function).output.hex()
+    out_a = execute_function(bytecode_a, function)
+    out_b = execute_function(bytecode_b, function)
    # #print((out_a, out_b))
     assert out_a == \
             out_b, f"{out_a} != {out_b} with {function.hex()}"

@@ -1,10 +1,13 @@
 from symbolic import EVM, ConstantValue, SymbolicValue, SymbolicOpcode
 from opcodes import PushOpcode, DupOpcode, SwapOpcode
 from string import Template
-from typing import List
+from typing import List, Optional, Dict
 from collections import defaultdict
 import hashlib
 from copy import deepcopy
+from collections import defaultdict
+from blocks import CallGraphBlock
+from dataclasses import dataclass
 
 """
 We iterate over tbe opcodes in the block to get a sense of where the variables are allocated.
@@ -76,10 +79,17 @@ class VyperIRBlock:
 	
 def optimize_ir_jumps(blocks: List[VyperIRBlock]):
 	blocks = blocks
+	conditional_blocks = set()
+	for i in blocks:
+		for instr in i.instructions:
+			if isinstance(instr, ConditionalJumpInstruction):
+				conditional_blocks.add(instr.false_branch)
+				conditional_blocks.add(instr.true_branch)
+
 	while True:
 		optimize_out = None
 		for i in blocks:
-			if i.is_jmp_only_block:
+			if i.is_jmp_only_block and i.offset not in conditional_blocks:
 				optimize_out = i
 				break
 		# So we have a block we want to optimize out
@@ -115,7 +125,7 @@ def optimize_ir_duplicate_blocks(blocks: List[VyperIRBlock]):
 			new_blocks = []
 			reference_block: VyperIRBlock = values[0]
 			remove_block: VyperIRBlock = values.pop()
-			print("remove ", remove_block)
+			# print("remove ", remove_block)
 			for i in blocks:
 				if i.name == remove_block.name:
 					continue
@@ -133,8 +143,8 @@ def optimize_ir_duplicate_blocks(blocks: List[VyperIRBlock]):
 def optimize_ir(blocks: List[VyperIRBlock]):
 # 	TODO: Re-enable
 #	return optimize_ir_duplicate_blocks(optimize_ir_jumps(blocks))
-#	return optimize_ir_jumps(blocks)
-	return blocks
+	return optimize_ir_jumps(blocks)
+#	return blocks
 
 def create_missing_blocks(blocks: List[VyperIRBlock]):
 	lookup_blocks = {}
@@ -166,8 +176,104 @@ def find_trace_id(current_block, executions):
 			return idx
 	assert i.parent_block is None, "SOmething is wrong"
 	return 0
+
+@dataclass
+class InsertPhiFunction:
+	target_block: str
+	phi_code: str
 	
-def execute_block(current_block, next_block, all_blocks):
+# delta executions needs to find the different executions and necessary phi functions  
+def delta_executions(all_blocks: Dict[str, CallGraphBlock], executions):
+	""""
+	This can't just be a single block, you need to look to the next blocks also ... Actually no, because it should be visible in the other traces ...
+	"""
+	assign_phi_functions = defaultdict(set)
+	assign_phi_functions_parents = defaultdict(set)
+	assign_phi_functions_inputs = {}
+	assign_phi_functions_base = {}
+	for traces in executions:
+		for index, opcode in enumerate(traces.opcodes):
+			if isinstance(opcode, PushOpcode) and isinstance(opcode, SwapOpcode) or isinstance(opcode, DupOpcode):
+				pass
+			elif opcode.name not in ["JUMPDEST", "POP", "JUMP", "JUMPI"]:
+				inputs = []
+				op = traces.executions[index]
+				for i in range(opcode.inputs):
+					idx = (i + 1)
+					current_op = op[-(idx)]
+					inputs.append("%" + str(current_op.pc))
+				base_line = ""
+				if opcode.outputs > 0:	
+					base_line = f"%{opcode.pc} = {opcode.name.lower()}" 
+				else:
+					base_line = f"{opcode.name.lower()}" 
+			#	print(base_line)
+
+				op = f"{base_line} " + ",".join(inputs)
+				if opcode.pc not in assign_phi_functions_inputs:
+					assign_phi_functions_inputs[opcode.pc] = []
+				if op not in assign_phi_functions[opcode.pc]:
+					assign_phi_functions[opcode.pc].add(op)
+					assign_phi_functions_parents[opcode.pc].add(traces.parent_block)
+					assign_phi_functions_inputs[opcode.pc].append(
+						inputs
+					)
+					assign_phi_functions_base[opcode.pc] = base_line
+	
+	generated_phi_functions: List[InsertPhiFunction] = []
+	delete_keys = []
+	for i in assign_phi_functions:
+		if len(assign_phi_functions[i]) <= 1:
+			delete_keys.append(i)
+	for i in delete_keys:
+		del assign_phi_functions[i]
+	for phi_key in list(assign_phi_functions.keys()):
+		if len(assign_phi_functions[phi_key]) > 1:
+			base_line, inputs = assign_phi_functions_base[phi_key], assign_phi_functions_inputs[phi_key]
+			new_inputs = []
+			block_a = None
+			block_b = None
+			phi_delta = []
+			for i in range(len(inputs[1])):				
+				opcode_block_a = int(inputs[0][i].replace("%", ""))
+				opcode_block_b = int(inputs[1][i].replace("%", ""))
+
+				if opcode_block_a == opcode_block_b:
+					new_inputs.append(inputs[0][i])
+					continue
+
+				outgoing_blocks = set()
+				for name, bb in all_blocks.items():
+					for j in bb.opcodes:
+						if j.pc == opcode_block_a:
+							for v in bb.outgoing:
+								outgoing_blocks.add(v)
+								block_a = f"@block_{name}_0"
+						elif j.pc == opcode_block_b:
+							for v in bb.outgoing:
+								outgoing_blocks.add(v)
+								block_b = f"@block_{name}_0"
+				new_inputs.append(f"%phi_{phi_key}")
+				phi_delta.append((inputs[0][i], inputs[1][i]))
+			assert len(outgoing_blocks) == 1
+			assert len(phi_delta) == 1
+			# Both have same outgoing block	which is a requirement
+			for (i, j) in phi_delta:
+				generated_phi_functions.append(
+					InsertPhiFunction(
+						phi_code=f"%phi_{phi_key} = phi {block_a}, {i}, {block_b}, {j}",
+						target_block=outgoing_blocks.pop(),
+					)
+				)
+			inputs = ",".join(new_inputs)
+			assign_phi_functions[phi_key] = f"{base_line} {inputs}"
+			print(assign_phi_functions)
+#		else:
+#			raise Exception("This code should not be reachable")
+
+	return assign_phi_functions, generated_phi_functions
+
+def execute_block(current_block: CallGraphBlock, next_block: Optional[CallGraphBlock], all_blocks: Dict[str, CallGraphBlock], phi_functions: List[InsertPhiFunction]):
 	# This block was never reached.
 	if len(current_block.execution_trace) == 0: 
 		return []
@@ -180,83 +286,91 @@ def execute_block(current_block, next_block, all_blocks):
 
 	# Selects the first trace, this won't be correct in cases where blocks are being splitted out ... 
 	vyper_blocks = []
-	for trace_id in range(len(current_block.execution_trace)):
-		vyper_ir = []
-		traces = current_block.execution_trace[trace_id]
+#	for trace_id in range(len(current_block.execution_trace)):
+	# IF there are more than two trace ids, we need ot identify which blocks have changed between executions and then insert the phi functins.
+	trace_id = 0
+	vyper_ir = []
+	traces = current_block.execution_trace[trace_id]
+	assign_phi_functions, _ = delta_executions(all_blocks, current_block.execution_trace)
 
-		has_block_ended = False
-		local_variables = {}
-		# If the values are greater than
-		if len(current_block.incoming) > 1:
-			print(f"Block: {hex(current_block.start_offset)}, Parent blocks {list(map(hex, current_block.incoming))}")
-			print("Multiple values used at this execution, might cause mismatch in execution :)")
-			print("")
-		# So to handle the difference in trace, I think we should have a concept of trace ids ...
-		# We jump to different traces depending on the execution. 
-		for index, opcode in enumerate(current_block.opcodes):
-			# assert len(list(set(values))) <= 1
-			# TODO: Ideally we here have the phi function, but that doesn't seem to work well.
-			if opcode.name == "JUMP":
-				offset = traces.executions[index][-1].value
-				print(offset, all_blocks.keys())
-				#local_trace_id = trace_id if trace_id < len(all_blocks[offset].execution_trace) else 0
-				#print((trace_id, all_blocks[offset].execution_trace))
-				local_trace_id = max(
-					find_trace_id(current_block.start_offset, all_blocks[offset].execution_trace),
-					trace_id
-				)
-				vyper_ir.append(JmpInstruction(offset, local_trace_id))
-				has_block_ended = True
-			elif opcode.name == "JUMPI":
-				offset = traces.executions[index][-1].value
-				# TODO: this needs to do some folding.
-				condition = traces.executions[index][-2].pc
-				second_offset = opcode.pc + 1
-				false_branch, true_branch = sorted([
-					offset,
-					second_offset
-				], key=lambda x: abs(x - opcode.pc))
-				local_trace_id = 0 # find_trace_id(current_block.start_offset, all_blocks[offset].execution_trace)
-				vyper_ir.append(ConditionalJumpInstruction(
-					false_branch,
-					true_branch,
-					condition, 
-					local_trace_id,
-				))
-				has_block_ended = True
-			elif isinstance(opcode, PushOpcode):
-				pass
-			elif isinstance(opcode, SwapOpcode) or isinstance(opcode, DupOpcode):
-				pass
-			elif opcode.name not in ["JUMPDEST", "POP"]:
-				inputs = []
-				op = traces.executions[index]
-				for i in range(opcode.inputs):
-					idx = (i + 1)
-					current_op = op[-(idx)]
-					# If it is a direct op, we can just use it inplace.
-					if isinstance(current_op, ConstantValue):
-						inputs.append(str(current_op.value))
-					elif current_op.pc in local_variables:
-						inputs.append("%" + str(current_op.pc))
-					elif current_op.pc in global_variables:
-						vyper_ir.append(global_variables[current_op.pc])
-						inputs.append("%" + str(current_op.pc))
-					else:
-						inputs.append("%" + str(current_op.pc))
-				if opcode.outputs > 0:
-					vyper_ir.append(f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs))
-					global_variables[opcode.pc] = f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs)
-					local_variables[opcode.pc] = global_variables[opcode.pc]
+	has_block_ended = False
+	local_variables = {}
+
+	for v in phi_functions:
+		if v.target_block == current_block.start_offset:
+			vyper_ir.append(v.phi_code)
+	
+	# So to handle the difference in trace, I think we should have a concept of trace ids ...
+	# We jump to different traces depending on the execution. 
+	for index, opcode in enumerate(current_block.opcodes):
+		# assert len(list(set(values))) <= 1
+		# TODO: Ideally we here have the phi function, but that doesn't seem to work well.
+		if opcode.name == "JUMP":
+			offset = traces.executions[index][-1].value
+		#	print(offset, all_blocks.keys())
+			#local_trace_id = trace_id if trace_id < len(all_blocks[offset].execution_trace) else 0
+			#print((trace_id, all_blocks[offset].execution_trace))
+			local_trace_id = 0
+			vyper_ir.append(JmpInstruction(offset, local_trace_id))
+			has_block_ended = True
+		elif opcode.name == "JUMPI":
+			offset = traces.executions[index][-1].value
+			# TODO: this needs to do some folding.
+			condition = traces.executions[index][-2].pc
+			second_offset = opcode.pc + 1
+			false_branch, true_branch = sorted([
+				offset,
+				second_offset
+			], key=lambda x: abs(x - opcode.pc))
+			local_trace_id = 0 # find_trace_id(current_block.start_offset, all_blocks[offset].execution_trace)
+			vyper_ir.append(ConditionalJumpInstruction(
+				false_branch,
+				true_branch,
+				condition, 
+				local_trace_id,
+			))
+			has_block_ended = True
+		elif isinstance(opcode, PushOpcode): 
+			vyper_ir.append(f"%{opcode.pc} = {opcode.value()}")
+		elif isinstance(opcode, SwapOpcode) or isinstance(opcode, DupOpcode):
+			pass
+		elif opcode.name not in ["JUMPDEST", "POP"]:
+			inputs = []
+			op = traces.executions[index]
+			for i in range(opcode.inputs):
+				idx = (i + 1)
+				current_op = op[-(idx)]
+				# If it is a direct op, we can just use it inplace.
+				if isinstance(current_op, ConstantValue):
+					inputs.append(str(current_op.value))
+				elif current_op.pc in local_variables:
+					inputs.append("%" + str(current_op.pc))
+				elif current_op.pc in global_variables:
+					vyper_ir.append(global_variables[current_op.pc])
+					inputs.append("%" + str(current_op.pc))
 				else:
-					vyper_ir.append(f"{opcode.name.lower()} " + ",".join(inputs))
-				if opcode.name in ["RETURN", "REVERT", "JUMP"]:
-					has_block_ended = True
-		if not has_block_ended:
-			local_trace_id = max(
-				find_trace_id(current_block.start_offset, all_blocks[next_block.start_offset].execution_trace),
-				trace_id
-			)
-			vyper_ir.append(JmpInstruction(next_block.start_offset, local_trace_id))
-		vyper_blocks.append(VyperIRBlock(current_block, vyper_ir, trace_id))
+					inputs.append("%" + str(current_op.pc))
+			if opcode.outputs > 0:
+				op = f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs)
+				if opcode.pc in assign_phi_functions and len(assign_phi_functions[opcode.pc]) > 1:
+					# op += "; this has multi value and need a phi function"
+					op = assign_phi_functions[opcode.pc]
+				vyper_ir.append(op)
+				global_variables[opcode.pc] = f"%{opcode.pc} = {opcode.name.lower()} " + ",".join(inputs)
+				local_variables[opcode.pc] = global_variables[opcode.pc]
+			else:
+				op = f"{opcode.name.lower()} " + ",".join(inputs)
+				if opcode.pc in assign_phi_functions and len(assign_phi_functions[opcode.pc]) > 1:
+					op += "; this has multi value and need a phi function"
+					op = assign_phi_functions[opcode.pc]
+				vyper_ir.append(op)
+			if opcode.name in ["RETURN", "REVERT", "JUMP"]:
+				has_block_ended = True
+	if not has_block_ended:
+		local_trace_id = max(
+			find_trace_id(current_block.start_offset, all_blocks[next_block.start_offset].execution_trace),
+			trace_id
+		)
+		vyper_ir.append(JmpInstruction(next_block.start_offset, local_trace_id))
+	vyper_blocks.append(VyperIRBlock(current_block, vyper_ir, trace_id))
 	return vyper_blocks

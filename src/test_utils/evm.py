@@ -37,3 +37,7 @@ def run_vm(bytecode: bytes, data: bytes, storage={}, wei_value=0) -> Computation
 		code=bytecode,
 	)
 	return computation
+
+
+def execute_function(bytecode, function):
+    return run_vm(bytecode, function).output.hex()
