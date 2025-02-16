@@ -41,9 +41,33 @@ class ConstantValue(SymbolicValue):
 	def __str__(self):
 		return f"ConstantValue({hex(self.value)})"	
 
+class EvmStack:
+	def __init__(self, stack=[]):
+		self.stack = stack
+
+	def append(self, item):
+		self.stack.append(item)
+		return self
+	
+	def pop(self, idx=-1):
+		return self.stack.pop(idx)
+
+	def __setitem__(self, idx, val):
+		self.stack[idx] = val
+		return self	
+
+	def __getitem__(self, idx):
+		return self.stack[idx]
+	
+	def __len__(self):
+		return len(self.stack)
+	
+	def __hash__(self):
+		return "\n".join(self.stack)
+
 class EVM:
 	def __init__(self, pc):
-		self.stack = []
+		self.stack = []# EvmStack()
 		self.pc = pc
 		self.trace_id = 0
 

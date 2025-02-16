@@ -6,6 +6,7 @@ from opcodes import Opcode, PushOpcode, DupOpcode, SwapOpcode
 from symbolic import EVM, ConstantValue, SymbolicOpcode
 from typing import List, Set, Dict, Optional, Any, Tuple
 from copy import deepcopy
+import hashlib
 
 @dataclass
 class BasicBlock:
@@ -21,9 +22,13 @@ class StackOpcode:
 	values: Set[int]
 
 @dataclass
+class Trace:
+	stack: List[SymbolicOpcode]
+
+@dataclass
 class ExecutionTrace:
 	parent_block: Optional[int]
-	executions: List[List[SymbolicOpcode]]
+	executions: List[Trace]
 	opcodes: List[List[Any]]
 	parent_trace_id: int
 
@@ -36,10 +41,21 @@ class CallGraphBlock(BasicBlock):
 	outgoing: Set[int]
 	incoming: Set[int]
 
+	mark: bool = False
+
+	def increment_pc(self, increment):
+		base_pc = self.opcodes[0].pc
+		for index in range(len(self.opcodes)):
+			self.opcodes[index].pc += (self.opcodes[index].pc - base_pc) + increment
+
 @dataclass
 class CallGraph:
 	blocks: List[CallGraphBlock]
 	blocks_lookup: Dict[str, CallGraphBlock]
+
+	@property
+	def max_pc(self):
+		return self.blocks[-1].opcodes[-1].pc
 
 end_of_block_opcodes = [
 	"JUMP",
@@ -113,9 +129,10 @@ def get_calling_blocks(opcodes):
 		block.execution_trace.append(current_execution_trace)
 		for index, opcode in enumerate(block.opcodes):
 			is_last_opcode = index == len(block.opcodes) - 1
-			current_execution_trace.executions.append(evm.clone().stack)
+			current_execution_trace.executions.append(Trace(
+				stack=evm.clone().stack
+			))
 			current_execution_trace.opcodes.append(deepcopy(opcode))
-		#	setattr(current_execution_trace.opcodes[-1], "id", -1)
 
 			if isinstance(opcode, PushOpcode):
 				var = ConstantValue(
@@ -197,6 +214,13 @@ def get_calling_blocks(opcodes):
 			connections[node_id] = True
 	raw_blocks = list(filter(lambda x: x.start_offset in connections, raw_blocks))
 	
+#	for i in raw_blocks:
+#		executions = i.execution_trace
+#		ids = []
+#		for i in executions:
+#			ids.append(hashlib.sha256("\n".join(list(map(str, i.executions))).encode()).hexdigest())
+#		print(ids)
+
 	blocks_lookup = {}
 	for i in raw_blocks:
 		blocks_lookup[i.start_offset] = i
@@ -207,4 +231,63 @@ def get_calling_blocks(opcodes):
 	)
 
 
+def flatten_blocks(blocks: CallGraph):
+	cfg = deepcopy(blocks)
+	cfg.blocks_lookup = {}
+	for v in cfg.blocks:
+		cfg.blocks_lookup[v.start_offset] = v
+	for index, block in enumerate(cfg.blocks):
+		new_blocks = []
+		if block.start_offset == 0xff or block.start_offset == 0x12a:
+			current_index = 0
+			while current_index < len(block.execution_trace):
+				new_flow = [
+					block.execution_trace[current_index].parent_block,
+					block.start_offset,
+				]
+				while True:
+					instr = block.execution_trace[current_index]
+					new_block = cfg.blocks_lookup[instr.executions[-1].stack[-1].value]
+					if len(new_block.outgoing) == 1 and block.start_offset in new_block.outgoing:
+						new_flow.append(new_block.start_offset)
+						new_flow.append(block.start_offset)
+						current_index += 1
+					else:
+						new_flow.append(new_block.start_offset)
+						current_index += 1
+						break
+				if new_flow not in new_blocks:
+					new_blocks.append(new_flow)
+
+			for v in new_blocks:
+				print(list(map(hex, v)))
+				current_blocks: List[CallGraphBlock] = []
+				# This should in effect be removed ... 
+				cfg.blocks_lookup[v[0]].outgoing = set()
+				current_max = cfg.max_pc
+				for index, blocks in enumerate(v[1:-1]):
+					new_block = CallGraphBlock(
+						opcodes=deepcopy(cfg.blocks_lookup[blocks].opcodes),
+						execution_trace=[],
+						outgoing=set(),
+						incoming=set(),
+						mark=True,
+					)
+					new_block.increment_pc(current_max)
+					if index > 0:
+						new_block.incoming.add(current_blocks[-1].opcodes[-1].pc)
+						current_blocks[-1].outgoing.add(new_block.opcodes[0].pc)
+					current_blocks.append(new_block)
+					current_max = new_block.opcodes[-1].pc
+				# This should then also replace the original entry ...
+				current_blocks[-1].outgoing.add(v[-1])
+				cfg.blocks_lookup[v[-1]].incoming.add(current_blocks[-1].opcodes[-1].pc)
+				cfg.blocks_lookup[v[0]].outgoing.add(current_blocks[0].start_offset)
+				cfg.blocks += current_blocks
+			cfg.blocks.remove(block)
+	cfg.blocks_lookup = {}
+	for v in cfg.blocks:
+		cfg.blocks_lookup[v.start_offset] = v
+
+	return cfg
 

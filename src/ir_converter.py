@@ -34,14 +34,13 @@ def execute_block(current_block: CallGraphBlock, next_block: Optional[CallGraphB
 	# We jump to different traces depending on the execution. 
 	for index, opcode in enumerate(current_block.opcodes):
 		if opcode.name == "JUMP":
-			offset = traces.executions[index][-1].value
-			local_trace_id = 0
+			offset = traces.executions[index].stack[-1].value
 			vyper_ir.append(JmpInstruction(offset))
 			has_block_ended = True
 		elif opcode.name == "JUMPI":
-			offset = traces.executions[index][-1].value
+			offset = traces.executions[index].stack[-1].value
 			# TODO: this needs to do some folding.
-			condition = traces.executions[index][-2].pc
+			condition = traces.executions[index].stack[-2].pc
 			second_offset = opcode.pc + 1
 			false_branch, true_branch = [
 				second_offset,
@@ -60,7 +59,7 @@ def execute_block(current_block: CallGraphBlock, next_block: Optional[CallGraphB
 			pass
 		elif opcode.name not in ["JUMPDEST", "POP"]:
 			inputs = []
-			op = traces.executions[index]
+			op = traces.executions[index].stack
 			for dependent_variables in range(opcode.inputs):
 				idx = (dependent_variables + 1)
 				current_op = op[-(idx)]

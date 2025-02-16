@@ -65,13 +65,13 @@ class PhiGeneratedCode:
 	opcodes_assignments: Dict[str, List[str]]
 	touched_opcodes: Set[str]
 
-def execute(execution_trace, allow_ir_constants=False):
+def execute(execution_trace: ExecutionTrace, allow_ir_constants=False):
 	for index, opcode in enumerate(execution_trace.opcodes):
 		if isinstance(opcode, PushOpcode) and isinstance(opcode, SwapOpcode) or isinstance(opcode, DupOpcode):
 			pass
 		elif opcode.name not in ["JUMPDEST", "POP", "JUMP", "JUMPI"]:
 			inputs = []
-			op = execution_trace.executions[index]
+			op = execution_trace.executions[index].stack
 			for i in range(opcode.inputs):
 				idx = (i + 1)
 				current_op = op[-(idx)]
