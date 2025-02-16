@@ -1,5 +1,7 @@
 from opcodes import get_opcodes_from_bytes
-from ir_converter import execute_block, optimize_ir, create_missing_blocks, InsertPhiFunction, delta_executions, get_opcodes_assignments
+from ir_converter import execute_block
+from ir_optimizer import optimize_ir
+from ir_phi_handling import PhiHelperUtil
 from string import Template
 import subprocess
 from blocks import get_calling_blocks
@@ -7,7 +9,6 @@ from test_utils.compiler import SolcCompiler
 from cfg import create_cfg
 from test_utils.evm import execute_function
 from test_utils.abi import encode_function_call
-from typing import List
 
 class Transpiler:
 	def __init__(self):
@@ -21,27 +22,11 @@ $blocks
 		cfg = get_calling_blocks(get_opcodes_from_bytes(bytecode))
 		get_next_block = lambda idx: cfg.blocks[idx] if idx < len(cfg.blocks)  else None
 
-		phi_functions: List[InsertPhiFunction] = []
-		touched_opcodes = set()
-		opcodes_assignments = {}
-		for index, block in enumerate(cfg.blocks):
-			out = get_opcodes_assignments(block.execution_trace)
-			for key, value in out.items():
-				if key not in opcodes_assignments:
-					opcodes_assignments[key] = []
-				opcodes_assignments[key] += value
-
-		for index, block in enumerate(cfg.blocks):
-			_, out, op_touched = delta_executions(cfg.blocks_lookup, block.execution_trace, opcodes_assignments)
-			for v in out:
-				phi_functions.append(v)
-			for v in op_touched:
-				touched_opcodes.add(v)
-
+		phi_functions = PhiHelperUtil().get_opcodes_assignments(cfg.blocks, cfg.blocks_lookup)
 		blocks = []
+		global_variables = {}
 		for index, block in enumerate(cfg.blocks):
-			blocks += execute_block(block, get_next_block(index + 1), cfg.blocks_lookup, phi_functions, touched_opcodes, opcodes_assignments)
-		# blocks = create_missing_blocks(blocks)
+			blocks.append(execute_block(block, get_next_block(index + 1), global_variables, phi_functions))
 		blocks = optimize_ir(blocks)
 		return self.template.safe_substitute(
 			blocks="\n".join(list(map(str, blocks)))
@@ -65,26 +50,19 @@ def compile_venom_ir(output):
 
 if __name__ == "__main__":
 	code = """
-    contract Counter {
-        int private count = 0;
-
-
-        function _getCount() internal view returns (int) {
-            return count;
+    contract Hello {
+        function test() public returns (uint256) {
+            return a(15);
         }
 
-        function getCount() public view returns (int) {
-            return _getCount();
+        function fest() public returns (uint256) {
+            return a(5);
         }
 
-        function incrementCounter() public returns (int) {
-            count += 1;
-            return _getCount();
-        }
-
-        function decrementCounter() public returns (int) {
-            count -= 1;
-            return _getCount();
+        function a(uint256 a) internal returns (uint256){
+            if (a > 10) {        
+                return 2;
+            }
         }
     }
 	"""

@@ -160,11 +160,11 @@ def test_nested_if_conditions_params_multiple_functions():
         transpiled,
         encode_function_call("bagel()"),        
     )
- #   assert execute(
- #       output,
-#        transpiled,
-#        encode_function_call("fest()"),        
-#    )
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("fest()"),        
+    )
 
 
 def test_conditions():
