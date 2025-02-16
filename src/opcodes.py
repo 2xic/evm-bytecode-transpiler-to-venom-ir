@@ -7,6 +7,10 @@ class Opcode:
 		self.outputs = outputs
 		self.pc = pc 
 
+	@property
+	def is_constant_op(self):
+		return self.inputs == 0
+
 	def __str__(self):
 		return self.name
 

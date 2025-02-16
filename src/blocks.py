@@ -4,7 +4,7 @@ We need to convert the bytecode into basic blocks so that we can jump between th
 from dataclasses import dataclass
 from opcodes import Opcode, PushOpcode, DupOpcode, SwapOpcode
 from symbolic import EVM, ConstantValue, SymbolicOpcode
-from typing import List, Set, Dict, Optional, Any
+from typing import List, Set, Dict, Optional, Any, Tuple
 from copy import deepcopy
 
 @dataclass
@@ -83,7 +83,7 @@ def get_calling_blocks(opcodes):
 	basic_blocks = get_basic_blocks(opcodes)
 	raw_blocks: List[CallGraphBlock] = []
 	variable_counter = 1
-	lookup_blocks = {}
+	lookup_blocks: Dict[int, CallGraphBlock] = {}
 	for i in basic_blocks:
 		raw_blocks.append(CallGraphBlock(
 			opcodes=i.opcodes,
@@ -93,7 +93,7 @@ def get_calling_blocks(opcodes):
 		))
 		lookup_blocks[i.start_offset] = raw_blocks[-1]
 
-	blocks = [
+	blocks: List[Tuple[CallGraphBlock, EVM, Optional[CallGraphBlock]]] = [
 		(lookup_blocks[0], EVM(pc=0), None)
 	]
 	while len(blocks) > 0:
@@ -102,6 +102,8 @@ def get_calling_blocks(opcodes):
 			continue
 		if parent_block is not None:
 			block.incoming.add(parent_block.start_offset)
+	#		for outgoing in block.outgoing:
+	#			lookup_blocks[outgoing].incoming.add(block.start_offset)
 		current_execution_trace = ExecutionTrace(
 			parent_block=(parent_block.start_offset if parent_block is not None else None),
 			parent_trace_id=(len(lookup_blocks[parent_block.start_offset].execution_trace) if parent_block is not None else 1),

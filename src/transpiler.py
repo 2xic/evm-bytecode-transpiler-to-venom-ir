@@ -1,5 +1,5 @@
 from opcodes import get_opcodes_from_bytes
-from ir_converter import execute_block, optimize_ir, create_missing_blocks, InsertPhiFunction, delta_executions
+from ir_converter import execute_block, optimize_ir, create_missing_blocks, InsertPhiFunction, delta_executions, get_opcodes_assignments
 from string import Template
 import subprocess
 from blocks import get_calling_blocks
@@ -22,14 +22,25 @@ $blocks
 		get_next_block = lambda idx: cfg.blocks[idx] if idx < len(cfg.blocks)  else None
 
 		phi_functions: List[InsertPhiFunction] = []
+		touched_opcodes = set()
+		opcodes_assignments = {}
 		for index, block in enumerate(cfg.blocks):
-			_, out = delta_executions(cfg.blocks_lookup, block.execution_trace)
+			out = get_opcodes_assignments(block.execution_trace)
+			for key, value in out.items():
+				if key not in opcodes_assignments:
+					opcodes_assignments[key] = []
+				opcodes_assignments[key] += value
+
+		for index, block in enumerate(cfg.blocks):
+			_, out, op_touched = delta_executions(cfg.blocks_lookup, block.execution_trace, opcodes_assignments)
 			for v in out:
-				phi_functions.append(v)		
+				phi_functions.append(v)
+			for v in op_touched:
+				touched_opcodes.add(v)
 
 		blocks = []
 		for index, block in enumerate(cfg.blocks):
-			blocks += execute_block(block, get_next_block(index + 1), cfg.blocks_lookup, phi_functions)
+			blocks += execute_block(block, get_next_block(index + 1), cfg.blocks_lookup, phi_functions, touched_opcodes, opcodes_assignments)
 		# blocks = create_missing_blocks(blocks)
 		blocks = optimize_ir(blocks)
 		return self.template.safe_substitute(
@@ -54,13 +65,26 @@ def compile_venom_ir(output):
 
 if __name__ == "__main__":
 	code = """
-    contract Hello {
-        function test() public returns (uint256) {
-            return bagel();
+    contract Counter {
+        int private count = 0;
+
+
+        function _getCount() internal view returns (int) {
+            return count;
         }
 
-        function bagel() public returns (uint256) {
-            return 1;
+        function getCount() public view returns (int) {
+            return _getCount();
+        }
+
+        function incrementCounter() public returns (int) {
+            count += 1;
+            return _getCount();
+        }
+
+        function decrementCounter() public returns (int) {
+            count -= 1;
+            return _getCount();
         }
     }
 	"""
@@ -75,12 +99,14 @@ if __name__ == "__main__":
 
 	create_cfg(venom_bytecode, "venom.png")
 	print("OUT:")
-	print(execute_function(
-		venom_bytecode,
-		encode_function_call("test()")
-	))
-	print(execute_function(
-		venom_bytecode,
-		encode_function_call("bagel()")
-	))
+	for name, code in zip(["solidity", "venom"], [bytecode, venom_bytecode]):
+		print(name)
+		print(execute_function(
+			code,
+			encode_function_call("test()")
+		))
+		print(execute_function(
+			code,
+			encode_function_call("fest()")
+		))
 

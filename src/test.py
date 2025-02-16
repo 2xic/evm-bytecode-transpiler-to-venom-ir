@@ -60,6 +60,11 @@ def test_simple_multiple_functions():
         transpiled,
         encode_function_call("test()"),        
     )
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("fest()"),        
+    )
 
 def test_nested_if_conditions():
     code = """
@@ -74,13 +79,13 @@ def test_nested_if_conditions():
     output = SolcCompiler().compile(code)
     transpiled = assert_compilation(output)
     #print(transpiled.hex())
-    
     assert execute(
         output,
         transpiled,
         encode_function_call("test()"),        
     )
 
+def test_nested_if_conditions_explicit():
     code = """
     contract Hello {
         function test() public returns (uint256) {
@@ -100,6 +105,7 @@ def test_nested_if_conditions():
         encode_function_call("test()"),        
     )
 
+def test_nested_if_conditions_params_explicit():
     code = """
     contract Hello {
         function test() public returns (uint256) {
@@ -122,6 +128,8 @@ def test_nested_if_conditions():
         encode_function_call("test()"),        
     )
 
+
+def test_nested_if_conditions_params_multiple_functions():
     code = """
     contract Hello {
         function test() public returns (uint256) {
@@ -147,6 +155,16 @@ def test_nested_if_conditions():
         transpiled,
         encode_function_call("test()"),        
     )
+    assert execute(
+        output,
+        transpiled,
+        encode_function_call("bagel()"),        
+    )
+ #   assert execute(
+ #       output,
+#        transpiled,
+#        encode_function_call("fest()"),        
+#    )
 
 
 def test_conditions():
