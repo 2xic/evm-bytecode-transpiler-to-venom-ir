@@ -9,10 +9,10 @@ from typing import Dict
 We iterate over tbe opcodes in the block to get a sense of where the variables are allocated.
 """
 
-def execute_block(current_block: CallGraphBlock, next_block: Optional[CallGraphBlock], global_variables: Dict[int, str], phi_functions: PhiGeneratedCode):
+def execute_block(current_block: CallGraphBlock, next_block: Optional[CallGraphBlock], global_variables: Dict[int, str], phi_functions: PhiGeneratedCode, loop_resolver: Dict[str, str]):
 	# This block was never reached, should never happen.
 	if len(current_block.execution_trace) == 0: 
-		return []
+		return None
 	traces = current_block.execution_trace[0]
 	has_block_ended = False
 	local_variables = {}
@@ -35,6 +35,10 @@ def execute_block(current_block: CallGraphBlock, next_block: Optional[CallGraphB
 	for index, opcode in enumerate(current_block.opcodes):
 		if opcode.name == "JUMP":
 			offset = traces.executions[index].stack[-1].value
+			#if current_block.start_offset in loop_resolver:
+			#	vyper_ir.append(JmpInstruction(loop_resolver[current_block.start_offset]))
+			#else:
+			# print(hex(current_block.start_offset), )
 			vyper_ir.append(JmpInstruction(offset))
 			has_block_ended = True
 		elif opcode.name == "JUMPI":

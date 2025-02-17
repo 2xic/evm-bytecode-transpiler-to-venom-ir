@@ -6,6 +6,7 @@ def optimize_ir_jumps(blocks: List[VyperIRBlock]):
 	blocks = blocks
 	conditional_blocks = set()
 	for i in blocks:
+		print(i)
 		for instr in i.instructions:
 			if isinstance(instr, ConditionalJumpInstruction):
 				conditional_blocks.add(instr.false_branch)

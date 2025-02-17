@@ -4,7 +4,7 @@ from ir_optimizer import optimize_ir
 from ir_phi_handling import PhiHelperUtil
 from string import Template
 import subprocess
-from blocks import get_calling_blocks
+from blocks import get_calling_blocks, flatten_blocks
 from test_utils.compiler import SolcCompiler
 from cfg import create_cfg
 from test_utils.evm import execute_function
@@ -19,15 +19,17 @@ $blocks
 """)
 
 	def transpile(self, bytecode):
-		cfg = get_calling_blocks(get_opcodes_from_bytes(bytecode))
+		cfg = (get_calling_blocks(get_opcodes_from_bytes(bytecode)))
 		get_next_block = lambda idx: cfg.blocks[idx] if idx < len(cfg.blocks)  else None
 
 		phi_functions = PhiHelperUtil().get_opcodes_assignments(cfg.blocks, cfg.blocks_lookup)
 		blocks = []
 		global_variables = {}
 		for index, block in enumerate(cfg.blocks):
-			blocks.append(execute_block(block, get_next_block(index + 1), global_variables, phi_functions))
-		blocks = optimize_ir(blocks)
+			block = execute_block(block, get_next_block(index + 1), global_variables, phi_functions, cfg.unwrapped_loops)
+			if not block is None:
+				blocks.append(block)
+		# blocks = optimize_ir(blocks)
 		return self.template.safe_substitute(
 			blocks="\n".join(list(map(str, blocks)))
 		)
@@ -81,10 +83,10 @@ if __name__ == "__main__":
 		print(name)
 		print(execute_function(
 			code,
-			encode_function_call("test()")
+			encode_function_call("getCount()")
 		))
 		print(execute_function(
 			code,
-			encode_function_call("fest()")
+			encode_function_call("incrementCounter()")
 		))
 

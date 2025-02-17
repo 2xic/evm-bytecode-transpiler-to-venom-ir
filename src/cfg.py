@@ -28,26 +28,19 @@ def create_cfg(bytecode, name="cfg.png", flatten=False):
 
 if __name__ == "__main__":
 	code = """
-    contract Counter {
-        int private count = 0;
-
-
-        function _getCount() internal view returns (int) {
-            return count;
+    contract Hello {
+        function test() public returns (uint256) {
+            return a(15);
         }
 
-        function getCount() public view returns (int) {
-            return _getCount();
+        function fest() public returns (uint256) {
+            return a(5);
         }
 
-        function incrementCounter() public returns (int) {
-            count += 1;
-            return _getCount();
-        }
-
-        function decrementCounter() public returns (int) {
-            count -= 1;
-            return _getCount();
+        function a(uint256 a) internal returns (uint256){
+            if (a > 10) {        
+                return 2;
+            }
         }
     }
 	"""

@@ -52,6 +52,7 @@ class CallGraphBlock(BasicBlock):
 class CallGraph:
 	blocks: List[CallGraphBlock]
 	blocks_lookup: Dict[str, CallGraphBlock]
+	unwrapped_loops: Dict[str, str]
 
 	@property
 	def max_pc(self):
@@ -67,7 +68,7 @@ end_of_block_opcodes = [
 start_of_block_opcodes = [
 	"JUMPDEST"
 ]
-def get_basic_blocks(opcodes) -> List[Opcode]:
+def get_basic_blocks(opcodes) -> List[BasicBlock]:
 	blocks = []
 	current_block = BasicBlock(
 		opcodes=[]
@@ -118,8 +119,6 @@ def get_calling_blocks(opcodes):
 			continue
 		if parent_block is not None:
 			block.incoming.add(parent_block.start_offset)
-	#		for outgoing in block.outgoing:
-	#			lookup_blocks[outgoing].incoming.add(block.start_offset)
 		current_execution_trace = ExecutionTrace(
 			parent_block=(parent_block.start_offset if parent_block is not None else None),
 			parent_trace_id=(len(lookup_blocks[parent_block.start_offset].execution_trace) if parent_block is not None else 1),
@@ -225,69 +224,149 @@ def get_calling_blocks(opcodes):
 	for i in raw_blocks:
 		blocks_lookup[i.start_offset] = i
 
-	return CallGraph(
+	cfg = CallGraph(
 		blocks=raw_blocks,
 		blocks_lookup=blocks_lookup,
+		unwrapped_loops={}
 	)
+	cfg.unwrapped_loops = unwrap_loops(cfg)
+	print(cfg.unwrapped_loops)
+	return cfg
 
 
+
+def unwrap_loops(cfg: CallGraph):
+	fixed_blocks = set()
+	unwrapped_loops = {}
+	while True:
+		new_blocks = []
+		for index, block in enumerate(cfg.blocks):
+			if block.opcodes[-1].name == "JUMP" and len(block.outgoing) > 1 and len(block.incoming) > 1 and not block.start_offset in fixed_blocks:
+				current_index = 0
+				while current_index < len(block.execution_trace):
+					new_flow = [
+						block.execution_trace[current_index].parent_block,
+						block.start_offset,
+					]
+					while True:
+						instr = block.execution_trace[current_index]
+						jump_location = instr.executions[-1].stack[-1].value
+						#new_executions_blocks.append(instr.executions)
+						if jump_location not in cfg.blocks_lookup:
+							break
+						new_block = cfg.blocks_lookup[jump_location]
+						if len(new_block.outgoing) == 1 and block.start_offset in new_block.outgoing:
+							new_flow.append(new_block.start_offset)
+							new_flow.append(block.start_offset)
+							current_index += 1
+						else:
+							new_flow.append(new_block.start_offset)
+							current_index += 1
+							break
+					if new_flow not in new_blocks:# and len(new_flow) > 2:
+						new_blocks.append(new_flow)
+				print(new_flow)
+				print("incoming ",block.incoming, " ", hex(block.start_offset))
+				fixed_blocks.add(block.start_offset)
+				for i in new_blocks:
+					#if i[0] not in unwrapped_loops:
+					#assert i[0] not in unwrapped_loops or unwrapped_loops[i[0]] == i[-1]
+					unwrapped_loops[i[0]] = i[-1]
+					pass
+				break
+		if len(new_blocks) == 0:
+			break
+	return unwrapped_loops				
+"""
+todo: this logic is also very hard to read... plz 
+"""
 def flatten_blocks(blocks: CallGraph):
 	cfg = deepcopy(blocks)
 	cfg.blocks_lookup = {}
 	for v in cfg.blocks:
 		cfg.blocks_lookup[v.start_offset] = v
-	for index, block in enumerate(cfg.blocks):
+	fixed_blocks = set()
+	while True:
 		new_blocks = []
-		if block.start_offset == 0xff or block.start_offset == 0x12a:
-			current_index = 0
-			while current_index < len(block.execution_trace):
-				new_flow = [
-					block.execution_trace[current_index].parent_block,
-					block.start_offset,
-				]
-				while True:
-					instr = block.execution_trace[current_index]
-					new_block = cfg.blocks_lookup[instr.executions[-1].stack[-1].value]
-					if len(new_block.outgoing) == 1 and block.start_offset in new_block.outgoing:
-						new_flow.append(new_block.start_offset)
-						new_flow.append(block.start_offset)
-						current_index += 1
-					else:
-						new_flow.append(new_block.start_offset)
-						current_index += 1
-						break
-				if new_flow not in new_blocks:
-					new_blocks.append(new_flow)
+		for index, block in enumerate(cfg.blocks):
+			if block.opcodes[-1].name == "JUMP" and len(block.outgoing) > 1 and not block.start_offset in fixed_blocks:
+				current_index = 0
+				while current_index < len(block.execution_trace):
+					new_flow = [
+						block.execution_trace[current_index].parent_block,
+						block.start_offset,
+					]
+					while True:
+						instr = block.execution_trace[current_index]
+						jump_location = instr.executions[-1].stack[-1].value
+						#new_executions_blocks.append(instr.executions)
+						if jump_location not in cfg.blocks_lookup:
+							break
+						new_block = cfg.blocks_lookup[jump_location]
+						if len(new_block.outgoing) == 1 and block.start_offset in new_block.outgoing:
+							new_flow.append(new_block.start_offset)
+							new_flow.append(block.start_offset)
+							current_index += 1
+						else:
+							new_flow.append(new_block.start_offset)
+							current_index += 1
+							break
+					if new_flow not in new_blocks:
+						new_blocks.append(new_flow)
+					print(list(map(hex, new_flow)))
+				for v in new_blocks:
+					current_blocks: List[CallGraphBlock] = []
+					parent_block = v[0]
 
-			for v in new_blocks:
-				print(list(map(hex, v)))
-				current_blocks: List[CallGraphBlock] = []
-				# This should in effect be removed ... 
-				cfg.blocks_lookup[v[0]].outgoing = set()
-				current_max = cfg.max_pc
-				for index, blocks in enumerate(v[1:-1]):
-					new_block = CallGraphBlock(
-						opcodes=deepcopy(cfg.blocks_lookup[blocks].opcodes),
-						execution_trace=[],
-						outgoing=set(),
-						incoming=set(),
-						mark=True,
-					)
-					new_block.increment_pc(current_max)
-					if index > 0:
-						new_block.incoming.add(current_blocks[-1].opcodes[-1].pc)
-						current_blocks[-1].outgoing.add(new_block.opcodes[0].pc)
-					current_blocks.append(new_block)
-					current_max = new_block.opcodes[-1].pc
-				# This should then also replace the original entry ...
-				current_blocks[-1].outgoing.add(v[-1])
-				cfg.blocks_lookup[v[-1]].incoming.add(current_blocks[-1].opcodes[-1].pc)
-				cfg.blocks_lookup[v[0]].outgoing.add(current_blocks[0].start_offset)
-				cfg.blocks += current_blocks
-			cfg.blocks.remove(block)
+					cfg.blocks_lookup[parent_block].outgoing = set()
+					current_max = cfg.max_pc
+				#	print((v, len(block.execution_trace)))
+				#	print((len(new_executions_blocks), len(v)))
+				#	assert len(new_executions_blocks) == len(v), f"{len(new_executions_blocks)} != {len(v)}"
+					for index, blocks in enumerate(v[1:-1]):
+						new_block = CallGraphBlock(
+							opcodes=deepcopy(cfg.blocks_lookup[blocks].opcodes),
+							execution_trace=[],
+							outgoing=set(),
+							incoming=set(),
+							mark=True,
+						)
+						new_block.increment_pc(current_max)
+						if index > 0:
+							new_block.incoming.add(current_blocks[-1].opcodes[-1].pc)
+							current_blocks[-1].outgoing.add(new_block.opcodes[0].pc)
+						else:
+							new_block.incoming.add(v[0])
+						current_blocks.append(new_block)
+						current_max = new_block.opcodes[-1].pc
+					# This should then also replace the original entry ...
+					current_blocks[-1].outgoing.add(v[-1])
+					cfg.blocks_lookup[v[-1]].incoming.add(current_blocks[-1].opcodes[-1].pc)
+					
+					new_block_start = current_blocks[0].start_offset
+
+					cfg.blocks_lookup[parent_block].outgoing.add(new_block_start)
+					cfg.blocks += current_blocks
+					print("Created new blocks ",[
+						hex(v.start_offset)
+						for v in current_blocks
+					], hex(new_block_start), hex(parent_block))
+
+				for v in block.outgoing:
+					if v in cfg.blocks_lookup:
+						if block.start_offset in cfg.blocks_lookup[v].outgoing:
+							cfg.blocks_lookup[v].incoming.remove(block.start_offset)
+						if len(cfg.blocks_lookup[v].incoming) == 0:
+							cfg.blocks.remove(cfg.blocks_lookup[v])
+				del cfg.blocks_lookup[block.start_offset]
+				cfg.blocks.remove(block)
+				fixed_blocks.add(block.start_offset)
+				break
+		
+		if len(new_blocks) == 0:
+			break
 	cfg.blocks_lookup = {}
 	for v in cfg.blocks:
 		cfg.blocks_lookup[v.start_offset] = v
-
 	return cfg
 
