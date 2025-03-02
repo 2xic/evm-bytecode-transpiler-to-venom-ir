@@ -16,14 +16,29 @@ At least ... We should be able to use this construct a simpler CFG that is flatt
 class Opcode:
 	opcode: str 
 	opcode_pc: str 
+	
+@dataclass
+class VariableReference:
+	id: str
+
+	def __str__(self):
+		return f"%{self.id}"
 
 @dataclass
 class PhiFunction:
 	name: str 
-	value: List[str]
+	incoming: List[str]
+	values: List[str]
+	# Block to move the phi function into?
+	# reference_block = str
 
 	def __str__(self):
-		return f"%var{self.name} = PHI ({self.value})"
+		if len(self.values) > 0:
+			pair = map(list, list(zip(self.incoming, self.values)))
+			ids = ", ".join(sum(pair, []))
+			return f"%var{self.name} = PHI {ids})"
+		else:
+			return f"%var{self.name} = PHI ({self.incoming})"
 
 @dataclass
 class Opcode:
@@ -35,12 +50,14 @@ class Opcode:
 	variants: List[Opcode] = field(default_factory=lambda: [])
 
 	def __str__(self):
-		prefix = ""
-		if self.variable_id is not None:
-			prefix = f"%{self.variable_id} = "
-		#print(self.arguments)
-		inputs = ",".join(map(str, self.arguments))
-		return f"{hex(self.pc)}: {prefix}{self.name} {inputs}"
+		if self.name == "PUSH":
+			return f"{hex(self.pc)}: %{self.variable_id} = {self.arguments[0].value}"
+		else:
+			prefix = ""
+			if self.variable_id is not None:
+				prefix = f"%{self.variable_id} = "
+			inputs = ",".join(map(str, self.arguments))
+			return f"{hex(self.pc)}: {prefix}{self.name} {inputs}"
 
 @dataclass
 class SSA:
@@ -49,6 +66,19 @@ class SSA:
 	phi_functions: List[PhiFunction]
 	incoming: Set[int]
 	outgoing: Set[int]
+
+
+def get_phi_function(ssa_block: SSA, callstack: List[SSA]):
+	# NOTE:
+	# Selecting the first phi function here is not correct.
+	# 
+	if len(ssa_block.phi_functions) != 0:
+		return ssa_block.phi_functions[0], ssa_block
+	if len(ssa_block.phi_functions) == 0:
+		for i in callstack[::-1]:
+			if len(i.phi_functions) > 0:
+				return i.phi_functions[0], i
+	return None, None
 
 def get_calling_blocks(bytecode):
 	basic_blocks = get_basic_blocks(get_opcodes_from_bytes(bytecode))
@@ -83,16 +113,17 @@ def get_calling_blocks(bytecode):
 		ssa_index = 0
 		if len(ssa_block.incoming) > 1:
 			# Phi function that depends on the inputs ... 
-			ids = ",".join(list(map(hex, ssa_block.incoming)))
+			ids = list(map(hex, ssa_block.incoming))
 			has_phi_function = False
 			for i in ssa_block.phi_functions:
-				if i.value == ids:
+				if i.incoming == ids:
 					has_phi_function = True
 					break
 			if not has_phi_function:
 				ssa_block.phi_functions.append(PhiFunction(
 					name=phi_var,
-					value=ids,
+					incoming=ids,
+					values=[],
 				))
 				phi_var += 1
 
@@ -107,15 +138,17 @@ def get_calling_blocks(bytecode):
 				)
 				evm.stack.append(var)
 				evm.step()
-				ssa_block.opcodes.append(
-					Opcode(
-						variable_id=None,
-						pc=opcode.pc,
-						name="push",
-						is_ssa_opcode=False,
-						arguments=[var]
+				if previous_op is None:
+					ssa_block.opcodes.append(
+						Opcode(
+							variable_id=variable_counter,
+							pc=opcode.pc,
+							name="PUSH",
+							is_ssa_opcode=True,
+							arguments=[var]
+						)
 					)
-				)
+					variable_counter += 1
 			elif isinstance(opcode, DupOpcode):
 				evm.dup(opcode.index)
 				evm.step()
@@ -156,24 +189,27 @@ def get_calling_blocks(bytecode):
 						is_ssa_opcode=True,
 					)
 					if previous_op is not None:
-						if opcode.name != previous_op.name and not any([
-							i.name != opcode.name
+						if opcode.pc == 0x107:
+							print(next_offset, previous_op, [
+							i.arguments 
 							for i in previous_op.variants
-						]):
+						])
+						has_seen_variant = any([
+							i.arguments == opcode.arguments
+							for i in previous_op.variants
+						])
+						if opcode.arguments != previous_op.arguments and not has_seen_variant:
 							# Sometimes, we would need to go up the callstack to determine the origin of the call ... 
-							last_callstack_item = None if len(ssa_block.phi_functions) == 0 else ssa_block.phi_functions[0]
-							if len(ssa_block.phi_functions) == 0:
-								for i in callstack:
-									if len(i.phi_functions) > 0:
-										last_callstack_item = i.phi_functions[0]
-										break
-
+							last_callstack_item, _ = get_phi_function(ssa_block, callstack)
 							assert last_callstack_item is not None
 							current_op = ssa_block.opcodes[index]
 							# Replace the current opcode with the dynamic jump
 							new_opcode = Opcode(
 								pc=opcode.pc,
-								name=f"djmp var%{last_callstack_item.name}: {current_op.arguments[0]}, {next_offset.value}",
+								name=f"djmp %var{last_callstack_item.name}: ",
+								arguments=current_op.arguments + [
+									hex(next_offset.value),
+								],
 								variable_id=None,
 								is_ssa_opcode=True,
 								variants=[
@@ -181,7 +217,7 @@ def get_calling_blocks(bytecode):
 								]
 							)
 							new_opcode.variants.append(
-								new_opcode
+								opcode
 							)
 							ssa_block.opcodes[index] = new_opcode
 					else:
@@ -206,7 +242,10 @@ def get_calling_blocks(bytecode):
 							name="jnz",
 							is_ssa_opcode=True,
 							arguments=[
-								condition.id, hex(next_offset.value), hex(second_offset)
+								VariableReference(condition.id),
+								VariableReference(next_offset.id), 
+								#hex(next_offset.value), 
+								hex(second_offset)
 							],
 						))	
 					ssa_block.outgoing.add(next_offset.value)
@@ -237,10 +276,11 @@ def get_calling_blocks(bytecode):
 
 				def mapper(val):
 					if isinstance(val, SymbolicOpcode):
-						return str(val.id)
+						return "%" + str(val.id)
 					elif isinstance(val, ConstantValue):
-						return str(hex(val.value))
+						return "%" + str(val.id)
 					return str(val)
+				
 				inputs = list(map(mapper, inputs))
 				opcode = Opcode(
 						variable_id=(variable_id if previous_op is None else previous_op.variable_id),
@@ -258,11 +298,23 @@ def get_calling_blocks(bytecode):
 					# 1. Always use the variable id and do the constant folding at a later step
 					# 2. In case of duplicate values, we need to insert phi functions
 					# 3. Always use the same variable id, but swap the conflicting arguments with phi functions.
-					print(opcode, " != ", previous_op)
-					pass
-					#raise Exception("Unimplemented")
-					#if new_opcode != new_opcode:
-					#	ssa_block.opcodes[index].value = ssa_block.opcodes[index] + "; Multi value" 
+					last_callstack_item, reference_block = get_phi_function(ssa_block, callstack)
+					# For each input, input depends on the execution variable
+					# This phi function may have a different entry point though ...
+					new_inputs = []
+					for i, j in zip(opcode.arguments, previous_op.arguments):
+						# TODO: This needs to also depend on the actual parent block.
+						new_inputs.append(f"%{variable_counter}")
+						reference_block.phi_functions.append(
+							PhiFunction(
+								name=f"{variable_counter}",
+								incoming=last_callstack_item.incoming,
+								values=[i, j]
+							)
+						)
+						variable_counter += 1
+					ssa_block.opcodes[index].variants.append(ssa_block.opcodes[index])
+					ssa_block.opcodes[index].arguments = new_inputs	
 				ssa_index += 1
 			
 				pc = opcode.pc
@@ -274,8 +326,6 @@ def get_calling_blocks(bytecode):
 					)
 					ssa_block.outgoing.add(pc + 1)
 					pass
-		#	if opcode.name.upper() in end_of_block_opcodes:
-		#		break
 
 	return ssa_blocks
 
@@ -297,24 +347,45 @@ if __name__ == "__main__":
 		}
 	}
 	"""
+	code = """
+    contract Counter {
+        int private count = 0;
+
+
+        function _getCount() internal view returns (int) {
+            return count;
+        }
+
+        function getCount() public view returns (int) {
+            return _getCount();
+        }
+
+        function incrementCounter() public returns (int) {
+            count += 1;
+            return _getCount();
+        }
+
+        function decrementCounter() public returns (int) {
+            count -= 1;
+            return _getCount();
+        }
+    }
+	"""
 	dot = graphviz.Digraph(comment='cfg', format='png')
 	bytecode = SolcCompiler().compile(code, via_ir=False)
 	blocks = get_calling_blocks(bytecode)
 	for key, cfg_block in blocks.items():
-#		print(f"{hex(key)}:")
-#		print("\n".join(value.phi_functions))
-#		print("\n".join(value.opcodes))
-#		print("")
 		block = []
 		for opcode in cfg_block.phi_functions:
 			block.append(f"{opcode} \\l")
 		for opcode in cfg_block.opcodes:
-			#if opcode.is_ssa_opcode:
-			block.append(f"{opcode} \\l")
+			if opcode.is_ssa_opcode:
+				block.append(f"{opcode} \\l")
 			if opcode.name.upper() in end_of_block_opcodes:
 				break
 		if len(block) == 0:
-			block.append("<fallthrough>")
+			block.append("<fallthrough> \\l")
+		block.insert(0, f"block_{hex(cfg_block.id)}: \\l")
 		dot.node(hex(cfg_block.id), "".join(block), shape="box")
 		for edge in cfg_block.outgoing:
 			dot.edge(hex(cfg_block.id), hex(edge))
