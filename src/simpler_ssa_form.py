@@ -8,20 +8,24 @@ from opcodes import get_opcodes_from_bytes, DupOpcode, PushOpcode, SwapOpcode
 from blocks import get_basic_blocks, BasicBlock
 from dataclasses import dataclass
 from symbolic import EVM, ConstantValue, SymbolicOpcode
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Any
 import graphviz
 from blocks import end_of_block_opcodes
 from dataclasses import dataclass, field
 
-@dataclass
-class Argument:
-	value: str
 
 # Then you can create a phi function based on this.
 @dataclass
 class Arguments:
-	arguments: List[Argument]
+	arguments: List[Any]
 	parent_block: str 
+
+	def __str__(self):
+		def mapper(x):
+			if isinstance(x, ConstantValue):
+				return x.value
+			return x
+		return ",".join(map(mapper, self.arguments))
 
 @dataclass
 class Instruction:
@@ -29,11 +33,23 @@ class Instruction:
 	# All the argument values this instructions has had during execution.
 	arguments: List[Arguments]
 	# The resolved arguments
-	resolved_arguments: List[Argument] = field(default_factory=lambda: [])
+	resolved_arguments: Arguments# = field(default_factory=lambda: [])
 
 @dataclass
 class Opcode:
 	instruction: Instruction
+	variable_id: Optional[int] = None
+
+	def __str__(self):
+		if len(self.instruction.resolved_arguments) > 0:
+			ids = ",".join(map(str, self.instruction.resolved_arguments))
+			return f"{self.instruction.name} {ids}"
+		elif len(self.instruction.arguments) > 0:
+			print(self.instruction.arguments)
+			ids = ",".join(map(lambda x: "?", list(range(len(self.instruction.arguments[0].arguments)))))
+			return f"{self.instruction.name} {ids}"
+		else:
+			return f"{self.instruction.name}"
 
 @dataclass
 class SsaBlock:
@@ -42,7 +58,45 @@ class SsaBlock:
 	incoming: Set[str]
 	outgoing: Set[str]
 
-def execute(bytecode):
+	def remove_irrelevant_opcodes(self):
+		for i in list(self.opcodes):
+			if i.instruction.name in ["JUMPDEST", "SWAP", "DUP", "JUMPDEST", "POP", "PUSH"]:
+				self.opcodes.remove(i)
+		return self
+	
+	def resolve_argument(self, value):
+		if isinstance(value, ConstantValue):
+			return hex(value.value)
+		elif isinstance(value, SymbolicOpcode):
+			return f"%{value.id}"
+		else:
+			print(type(value))
+	
+	def resolve_arguments(self):
+		for i in list(self.opcodes):
+			if i.variable_id is not None:
+				i.instruction.name = f"%{i.variable_id} = {i.instruction.name}"
+			if len(i.instruction.arguments) == 1 and all([isinstance(i, ConstantValue) for i in i.instruction.arguments[0].arguments]):
+				i.instruction.resolved_arguments = list(map(self.resolve_argument, i.instruction.arguments[0].arguments))
+			elif len(i.instruction.arguments) == 1 and all([isinstance(i, SymbolicOpcode) for i in i.instruction.arguments[0].arguments]):
+				i.instruction.resolved_arguments = list(map(self.resolve_argument, i.instruction.arguments[0].arguments))
+		return self
+	
+@dataclass
+class SsaProgram:
+	blocks: List[SsaBlock]
+
+	def process(self):
+		variables = {}
+		for block in self.blocks:
+			for instructions in block.opcodes:
+				variables
+		
+		for block in self.blocks:
+			block.remove_irrelevant_opcodes()
+			block.resolve_arguments()
+
+def execute(bytecode) -> SsaProgram:
 	basic_blocks = get_basic_blocks(get_opcodes_from_bytes(bytecode))
 	blocks_lookup: Dict[str, BasicBlock] = {
 		block.start_offset:block for block in basic_blocks
@@ -61,6 +115,7 @@ def execute(bytecode):
 			incoming=set(),
 			outgoing=set(),
 		) 
+		print(block)
 		if not ssa_block.id in converted_blocks:
 			converted_blocks[ssa_block.id] = ssa_block
 		else:
@@ -84,7 +139,12 @@ def execute(bytecode):
 							instruction=Instruction(
 								name="PUSH",
 								resolved_arguments=[var],
-								arguments=[var]
+								arguments=[
+									Arguments(
+										arguments=[var],
+										parent_block=parent
+									)
+								]
 							)
 						)
 					)
@@ -129,7 +189,8 @@ def execute(bytecode):
 									arguments=[next_offset],
 									parent_block=(parent.id if parent is not None else None)
 								)
-							]
+							],
+							resolved_arguments=[],
 						)
 					)
 					ssa_block.opcodes.append(opcode)
@@ -146,9 +207,11 @@ def execute(bytecode):
 				evm.step()
 				second_offset = opcode.pc + 1
 				assert isinstance(next_offset, ConstantValue)
+				ssa_block.outgoing.add(next_offset.value)
 				blocks.append(
 					(blocks_lookup[next_offset.value], evm.clone(), ssa_block)
 				)
+				ssa_block.outgoing.add(second_offset)
 				blocks.append(
 					(blocks_lookup[second_offset], evm.clone(), ssa_block)
 				)
@@ -164,7 +227,8 @@ def execute(bytecode):
 								],
 								parent_block=(parent.id if parent is not None else None)
 							)
-						]
+						],
+						resolved_arguments=[],
 					)
 					ssa_block.opcodes.append(Opcode(
 						instruction=instruction
@@ -198,10 +262,12 @@ def execute(bytecode):
 								arguments=inputs,
 								parent_block=(parent.id if parent is not None else None)
 							)
-						]
+						],
+						resolved_arguments=[],
 					)	
 					ssa_block.opcodes.append(Opcode(
-						instruction=instruction
+						instruction=instruction,
+						variable_id=(variable_counter if opcode.outputs > 0 else None),
 					))	
 				else:
 					previous_op.instruction.arguments.append(
@@ -210,6 +276,8 @@ def execute(bytecode):
 							parent_block=(parent.id if parent is not None else None)
 						)
 					)
+				if opcode.outputs > 0:
+					variable_counter += 1
 				# Is fallthrough block
 				pc = opcode.pc
 				is_last_opcode = index == len(block.opcodes) - 1
@@ -218,7 +286,9 @@ def execute(bytecode):
 						(blocks_lookup[pc + 1], evm.clone(), ssa_block)
 					)
 					ssa_block.outgoing.add(pc + 1)
-		return converted_blocks
+	return SsaProgram(
+		list(converted_blocks.values())
+	)
 
 if __name__ == "__main__":
 	code = """
@@ -245,5 +315,18 @@ if __name__ == "__main__":
 		}
 	}
 	"""
+	dot = graphviz.Digraph(comment='cfg', format='png')
 	bytecode = SolcCompiler().compile(code, via_ir=False)
 	output = execute(bytecode)
+	output.process()
+	for blocks in output.blocks:
+		block = []
+		for opcode in blocks.opcodes:
+			block.append(f"\t{opcode} \\l")
+		if len(block) == 0:
+			block.append("<fallthrough> \\l")
+		block.insert(0, f"block_{hex(blocks.id)}: \\l")
+		dot.node(hex(blocks.id), "".join(block), shape="box")
+		for edge in blocks.outgoing:
+			dot.edge(hex(blocks.id), hex(edge))
+	dot.render("ssa".replace(".png",""), cleanup=True)
