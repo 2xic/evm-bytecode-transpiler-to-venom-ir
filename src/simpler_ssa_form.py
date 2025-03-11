@@ -13,15 +13,11 @@ import graphviz
 from blocks import end_of_block_opcodes
 from dataclasses import dataclass, field
 import hashlib
-
+from collections import defaultdict
 
 """
 Some issues atm
-- instructions that are re-excused will get new ids which are used on path splits which is not correct.
 - similar issue with instructions where the split happens at a higher level.
-- SOmetimes same node get same valeu
-	- phi @block_0x39, 0,  @block_0x53, 0
-
 """
 
 def mapper(x):
@@ -46,6 +42,7 @@ class Block:
 class Arguments:
 	arguments: List[Any]
 	parent_block: str 
+	traces: List[int]
 
 	def __str__(self):
 		return ",".join(map(mapper, self.arguments))
@@ -55,7 +52,7 @@ class Arguments:
 
 class ArgumentsHandler:
 	def __init__(self, v=[]):
-		self.entries = v
+		self.entries: List[Arguments] = v
 		self.seen = list(map(lambda x: hash(x), v))
 
 	def first(self):
@@ -133,7 +130,7 @@ class SsaBlock:
 				self.opcodes.remove(i)
 		return self
 	
-	def resolve_arguments(self):
+	def resolve_arguments(self, dict: Dict[str, 'SsaBlock']):
 		global PHI_FUNCTIONS_COUNTER
 		for i in list(self.opcodes):
 			if i.variable_id is not None:
@@ -142,6 +139,7 @@ class SsaBlock:
 				i.instruction.resolved_arguments = Arguments(
 					arguments=list(map(mapper, i.instruction.arguments.first().arguments)),
 					parent_block=None,
+					traces=[],
 				)
 			elif len(i.instruction.arguments) > 1:
 				seen_parents = {}
@@ -160,16 +158,20 @@ class SsaBlock:
 								value = mapper(v.arguments[argument])
 								if value.isnumeric():
 									var = f"%i_{mapper(v.arguments[argument])}"
-									self.preceding_opcodes.append(
-										Opcode(
-											Instruction(
-												name=(f"{var} = {mapper(v.arguments[argument])}"),
-												arguments=ArgumentsHandler([]),
-												resolved_arguments=Arguments(arguments=[], parent_block="")
-											),
-											variable_id=-1,
+									for g in self.preceding_opcodes:
+										if var in g.instruction.name:
+											break
+									else:
+										self.preceding_opcodes.append(
+											Opcode(
+												Instruction(
+													name=(f"{var} = {mapper(v.arguments[argument])}"),
+													arguments=ArgumentsHandler([]),
+													resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
+												),
+												variable_id=-1,
+											)
 										)
-									)
 									phi_functions.append(
 										(f"@block_{v.parent_block}, {var}")
 									)
@@ -180,14 +182,21 @@ class SsaBlock:
 									)
 									values.add(mapper(v.arguments[argument]))
 							else:
+								var = v.arguments[argument].id.value
+								self.preceding_opcodes.append(
+									Opcode(
+										Instruction(
+											name=(f"%i_{var} = {var}"),
+											arguments=ArgumentsHandler([]),
+											resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
+										),
+										variable_id=-1,
+									)
+								)
 								phi_functions.append(
-									f"@block_{v.parent_block}, {v.arguments[argument].id.value}"
+									f"@block_{v.parent_block}, %i_{var}"
 								)
 						
-						for v in i.instruction.arguments.entries:
-							if isinstance(v, SymbolicOpcode):
-								print(v.arguments[argument])
-						print(values)
 						if len(values) == 1:
 							resolved_arguments.append(values.pop())
 						else:
@@ -196,6 +205,7 @@ class SsaBlock:
 									",".join(phi_functions)
 								],
 								parent_block=None,
+								traces=[],
 							)
 							a = ",".join(phi_functions)
 							self.preceding_opcodes.append(
@@ -203,52 +213,54 @@ class SsaBlock:
 									Instruction(
 										name=f"%phi{PHI_FUNCTIONS_COUNTER} = phi {a}",
 										arguments=ArgumentsHandler([]),
-										resolved_arguments=Arguments(arguments=[], parent_block="")
+										resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
 									),
 									variable_id=-1,
 								)
 							)
 							resolved_arguments.append(f"%phi{PHI_FUNCTIONS_COUNTER}")
-							PHI_FUNCTIONS_COUNTER += 1
 							if i.instruction.name == "JMP": 	
 								for v in i.instruction.arguments.entries:
 									djmp_arguments.append(
 										f"@block_{hex(v.arguments[argument].id.value)}"
 									)
-								self.preceding_opcodes.append(
-									Opcode(
-										Instruction(
-											name=f"mstore 0, %phi{PHI_FUNCTIONS_COUNTER}",
-											arguments=ArgumentsHandler([]),
-											resolved_arguments=Arguments(arguments=[], parent_block="")
-										),
-										variable_id=-1,
-									)
-								)
-								self.preceding_opcodes.append(
-									Opcode(
-										Instruction(
-											name=f"%mhi{PHI_FUNCTIONS_COUNTER} = mload 0",
-											arguments=ArgumentsHandler([]),
-											resolved_arguments=Arguments(arguments=[], parent_block="")
-										),
-										variable_id=-1,
-									)
-								)
-								print(self.opcodes)
+								#self.preceding_opcodes.append(
+								#	Opcode(
+								#		Instruction(
+								#			name=f"mstore 0, %phi{PHI_FUNCTIONS_COUNTER}",
+								#			arguments=ArgumentsHandler([]),
+								#			resolved_arguments=Arguments(arguments=[], parent_block="")
+								#		),
+								#		variable_id=-1,
+								#	)
+								#)
+								#self.preceding_opcodes.append(
+								#	Opcode(
+								#		Instruction(
+								#			name=f"%mhi{PHI_FUNCTIONS_COUNTER} = mload 0",
+								#			arguments=ArgumentsHandler([]),
+								#			resolved_arguments=Arguments(arguments=[], parent_block="")
+								#		),
+								#		variable_id=-1,
+								#	)
+								#)
+								#print(self.opcodes)
 								djmp_arguments.append(
-									f"%mhi{PHI_FUNCTIONS_COUNTER}"
+									f"%phi{PHI_FUNCTIONS_COUNTER}"
 								)
+							PHI_FUNCTIONS_COUNTER += 1
 					if i.instruction.name == "JMP":
 						i.instruction.name = "djmp"
 						i.instruction.resolved_arguments = Arguments(
 							arguments=djmp_arguments,
 							parent_block=None,
+							traces=[],
 						)
 					else:			
 						i.instruction.resolved_arguments = Arguments(
 							arguments=resolved_arguments,
 							parent_block=None,
+							traces=[],
 						)
 				else:
 					opcode_trace = set()
@@ -268,20 +280,70 @@ class SsaBlock:
 						i.instruction.resolved_arguments = Arguments(
 							arguments=list(map(mapper, i.instruction.arguments.first().arguments)),
 							parent_block=None,
+							traces=[],
 						)
 					elif i.instruction.name == "JMP":
-						djmp_arguments = []
-						djmp_arguments.append(
-							f"?"
+						found_split_point = -1
+						index = 0
+						prev = None
+						while True:
+							current = set()
+							for v in i.instruction.arguments.entries:
+								if index < len(v.traces):
+									current.add(v.traces[index])
+							if len(current) == len(i.instruction.arguments.entries):
+								# Insert the split point at index - 1
+								found_split_point = index - 1
+								break
+							index += 1
+							prev = current.pop()
+						assert found_split_point != -1
+						print(hex(prev))
+						block = dict[prev]
+						phi_functions = []
+						for v in i.instruction.arguments.entries:
+							val = (v.arguments[0].id.value)
+							block.preceding_opcodes.append(
+								Opcode(
+									Instruction(
+										name=(f"%i_{val} = {val}"),
+										arguments=ArgumentsHandler([]),
+										resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
+									),
+									variable_id=-1,
+								)
+							)
+							phi_functions.append(
+								(f"@block_{hex(v.traces[found_split_point + 1])}, %i_{val}")
+							)
+
+						a = ",".join(phi_functions)
+						block.preceding_opcodes.append(
+							Opcode(
+								Instruction(
+									name=f"%phi{PHI_FUNCTIONS_COUNTER} = phi {a}",
+									arguments=ArgumentsHandler([]),
+									resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
+								),
+								variable_id=-1,
+							)
 						)
+						# THen we create a phi functions inside prev.
+						djmp_arguments = []
 						for v in i.instruction.arguments.entries:
 							djmp_arguments.append(
 								f"@block_{hex(v.arguments[0].id.value)}"
 							)
+						djmp_arguments.append(
+							f"%phi{PHI_FUNCTIONS_COUNTER}"
+						)
+						i.instruction.name = "djmp"
 						i.instruction.resolved_arguments = Arguments(
 							arguments=djmp_arguments,
 							parent_block=None,
+							traces=[],
 						)
+						PHI_FUNCTIONS_COUNTER += 1
 
 		return self
 	
@@ -293,9 +355,6 @@ class SsaBlock:
 				print("\t" + str(i.instruction.arguments.entries))
 				if i.variable_id == "48":
 					print("?")					
-#				for i in i.instruction.arguments.entries:
-#					print(i.arguments[0].pc, i.arguments[1].pc)
-#				break
 		
 	def __str__(self):
 		lines = [
@@ -312,13 +371,12 @@ class SsaProgram:
 	blocks: List[SsaBlock]
 
 	def process(self):		
-#		for block in self.blocks:
-#			for i in block.opcodes:
-#				print(i.variable_id)
-
+		lookup = {
+			v.id:v for v in self.blocks
+		}
 		for block in self.blocks:
 			block.remove_irrelevant_opcodes()
-			block.resolve_arguments()
+			block.resolve_arguments(lookup)
 		print("Unresolved instructions: ")
 		for block in self.blocks:
 			block.debug_log_unresolved_arguments()
@@ -351,14 +409,16 @@ def get_ssa_program(bytecode) -> SsaProgram:
 	blocks_lookup: Dict[str, BasicBlock] = {
 		block.start_offset:block for block in basic_blocks
 	}
-	blocks: List[tuple[BasicBlock, EVM, Optional[SsaBlock]]] = [
-		(blocks_lookup[0], EVM(pc=0), None)
+	blocks: List[tuple[BasicBlock, EVM, Optional[SsaBlock], List[int]]] = [
+		(blocks_lookup[0], EVM(pc=0), None, [])
 	]
 	converted_blocks = {}
 	variable_counter = 0
+	variable_id = {}
 
 	while len(blocks) > 0:
-		(block, evm, parent) = blocks.pop(0)
+		(block, evm, parent, traces) = blocks.pop(0)
+		parent_id = parent.id if parent is not None else None
 		ssa_block = SsaBlock(
 			id=block.start_offset,
 			opcodes=[],
@@ -393,11 +453,13 @@ def get_ssa_program(bytecode) -> SsaProgram:
 								resolved_arguments=Arguments(
 									arguments=[var],
 									parent_block=parent,
+									traces=traces,
 								),
 								arguments=ArgumentsHandler([
 									Arguments(
 										arguments=[var],
-										parent_block=parent
+										parent_block=parent,
+										traces=traces,
 									)
 								])
 							)
@@ -432,7 +494,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				next_offset = evm.pop_item()
 				assert isinstance(next_offset, ConstantValue)
 				blocks.append(
-					(blocks_lookup[next_offset.value], evm.clone(), ssa_block)
+					(blocks_lookup[next_offset.value], evm.clone(), ssa_block, [parent_id, ] + traces)
 				)
 				ssa_block.outgoing.add(next_offset.value)
 				if previous_op is None:
@@ -443,7 +505,8 @@ def get_ssa_program(bytecode) -> SsaProgram:
 								[
 									Arguments(
 										arguments=[Block(next_offset, pc=opcode.pc)],
-										parent_block=(hex(parent.id) if parent is not None else None)
+										parent_block=(hex(parent.id) if parent is not None else None),
+										traces=traces,
 									)
 								]
 							),
@@ -455,7 +518,8 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					previous_op.instruction.arguments.append(
 						Arguments(
 							arguments=[Block(next_offset, pc=opcode.pc)],
-							parent_block=(hex(parent.id) if parent is not None else None)
+							parent_block=(hex(parent.id) if parent is not None else None),
+							traces=traces,
 						)
 					)
 			elif opcode.name == "JUMPI":
@@ -466,11 +530,11 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				assert isinstance(next_offset, ConstantValue)
 				ssa_block.outgoing.add(next_offset.value)
 				blocks.append(
-					(blocks_lookup[next_offset.value], evm.clone(), ssa_block)
+					(blocks_lookup[next_offset.value], evm.clone(), ssa_block, [parent_id, ] + traces)
 				)
 				ssa_block.outgoing.add(second_offset)
 				blocks.append(
-					(blocks_lookup[second_offset], evm.clone(), ssa_block)
+					(blocks_lookup[second_offset], evm.clone(), ssa_block, [parent_id, ] + traces)
 				)
 				if previous_op is None:
 					instruction=Instruction(
@@ -482,7 +546,8 @@ def get_ssa_program(bytecode) -> SsaProgram:
 									Block(next_offset, pc=opcode.pc), 
 									Block(ConstantValue(None, second_offset, None), pc=opcode.pc)
 								],
-								parent_block=(hex(parent.id) if parent is not None else None)
+								parent_block=(hex(parent.id) if parent is not None else None),
+								traces=traces,
 							)
 						]),
 						resolved_arguments=None,
@@ -490,7 +555,6 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					ssa_block.opcodes.append(Opcode(
 						instruction=instruction
 					))
-					#print(instruction.arguments)
 				else:
 					previous_op.instruction.arguments.append(
 						Arguments(
@@ -499,33 +563,34 @@ def get_ssa_program(bytecode) -> SsaProgram:
 								Block(next_offset, pc=opcode.pc), 
 								Block(ConstantValue(None, second_offset, None), pc=opcode.pc)
 							],
-							parent_block=(hex(parent.id) if parent is not None else None)
+							parent_block=(hex(parent.id) if parent is not None else None),
+							traces=traces,
 						)
 					)
-					#print(previous_op.instruction.arguments)
 			else:
 				inputs = []
-				for i in range(opcode.inputs):
+				for _ in range(opcode.inputs):
 					inputs.append(evm.stack.pop())
 				assert opcode.outputs <= 1, f"Value {opcode.outputs}"
 				if opcode.outputs > 0:
 					evm.stack.append(
 						SymbolicOpcode(
-							id=variable_counter,
+							id=variable_id.get(opcode.pc, variable_counter),
 							opcode=opcode.name, 
 							inputs=inputs,
 							pc=opcode.pc,
 						)
 					)
-					if variable_counter == 48:
-						print("WTF?", opcode)
+					if opcode.pc not in variable_id:
+						variable_id[opcode.pc] = variable_counter
 				if previous_op is None:
 					instruction=Instruction(
 						name=opcode.name,
 						arguments=ArgumentsHandler([
 							Arguments(
 								arguments=inputs,
-								parent_block=(hex(parent.id) if parent is not None else None)
+								parent_block=(hex(parent.id) if parent is not None else None),
+								traces=traces,
 							)
 						]),
 						resolved_arguments=None,
@@ -540,7 +605,8 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					previous_op.instruction.arguments.append(
 						Arguments(
 							arguments=inputs,
-							parent_block=(hex(parent.id) if parent is not None else None)
+							parent_block=(hex(parent.id) if parent is not None else None),
+							traces=traces,
 						)
 					)
 				# Is fallthrough block
@@ -548,7 +614,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				is_last_opcode = index == len(block.opcodes) - 1
 				if is_last_opcode and (pc + 1) in blocks_lookup and not opcode.name in end_of_block_opcodes:
 					blocks.append(
-						(blocks_lookup[pc + 1], evm.clone(), ssa_block)
+						(blocks_lookup[pc + 1], evm.clone(), ssa_block, [parent_id, ] + traces)
 					)
 					ssa_block.outgoing.add(pc + 1)
 	return SsaProgram(

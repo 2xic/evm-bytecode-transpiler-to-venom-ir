@@ -1,9 +1,8 @@
 """
 We need a small symbolic EVM to be able to handle the lookups 
 """
-from opcodes import PushOpcode, DupOpcode
 from copy import deepcopy
-import random
+import hashlib
 
 class SymbolicValue:
 	def __init__(self, id, pc):
@@ -28,7 +27,10 @@ class SymbolicOpcode(SymbolicValue):
 		self.pc = pc
 
 	def __str__(self):
-		return f"SymbolicOpcode({self.opcode}, {self.inputs})"
+		return f"SymbolicOpcode({self.opcode}, {self.inputs}, {self.pc})"
+	
+	def __hash__(self):
+		return int(hashlib.sha256(self.__str__().encode()).hexdigest(), 16)
 
 	def __repr__(self):
 		return self.__str__()

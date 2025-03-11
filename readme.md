@@ -16,9 +16,6 @@ python3 -m vyper.cli.venom_main
 ./generator compile [venom file]
 ```
 
-## TODO
-- need to fix how to handle phi functions where the value differs based on parent block
-
 ## Info
 - https://en.wikipedia.org/wiki/Static_single-assignment_form
 - https://x.com/harkal/status/1870054989990666584
