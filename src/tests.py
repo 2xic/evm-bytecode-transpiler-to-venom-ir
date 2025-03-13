@@ -1,5 +1,5 @@
 from test_utils.compiler import SolcCompiler
-from simpler_ssa_form import get_ssa_program
+from transpiler import get_ssa_program
 from test_utils.compiler import SolcCompiler
 from test_utils.evm import execute_function
 from test_utils.abi import encode_function_call
@@ -80,7 +80,6 @@ def test_should_handle_loops():
 	contract Counter {
 		int private count = 0;
 
-
 		function _getCount() internal view returns (int) {
 			return count;
 		}
@@ -133,6 +132,53 @@ def test_should_handle_phi_djmps():
 		transpiled,
 		encode_function_call("test2()"),        
 	)
+
+def skip_test_should_handle_storage():
+	code = """
+    contract Hello {
+		uint256 public val = 0;
+
+		function set() public returns (uint) {
+			val = 50;
+			return val;
+		}
+    }
+	"""
+	bytecode = SolcCompiler().compile(code, via_ir=False)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("set()"),        
+	)
+
+# TODO: need to handle cycles in the CFG.
+def skip_test_should_handle_control_flow():
+	code = """
+    contract Hello {
+		function sumUpTo() public pure returns (uint) {
+			uint sum = 0;
+			for (uint i = 1; i <= 10; i++) {
+				sum += i;
+			}
+			return sum;
+		}
+    }
+	"""
+	bytecode = SolcCompiler().compile(code, via_ir=False)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("sumUpTo()"),        
+	)
+
 
 def skip_test_should_handle_coin_example():
 	code = """

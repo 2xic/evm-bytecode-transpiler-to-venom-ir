@@ -1,3 +1,7 @@
+# bytecode venom transpiler
+
+Input is EVM bytecode and output is Venom IR.
+
 ## Setup
 ```bash
 # git clone https://github.com/vyperlang/vyper
@@ -8,6 +12,9 @@ pip3 install -e .
 
 python3 -m vyper.cli.venom_main
 ```
+
+## Example
+*todo*
 
 ## Looking at the ir
 ```bash

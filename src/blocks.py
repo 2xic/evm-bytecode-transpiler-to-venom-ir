@@ -6,7 +6,17 @@ from opcodes import Opcode, PushOpcode, DupOpcode, SwapOpcode
 from symbolic import EVM, ConstantValue, SymbolicOpcode
 from typing import List, Set, Dict, Optional, Any, Tuple
 from copy import deepcopy
-import hashlib
+
+END_OF_BLOCK_OPCODES = [
+	"JUMP",
+	"JUMPI",
+	"STOP",
+	"REVERT",
+	"RETURN",
+]
+START_OF_BLOCK_OPCODES = [
+	"JUMPDEST"
+]
 
 @dataclass
 class BasicBlock:
@@ -57,30 +67,21 @@ class CallGraph:
 	def max_pc(self):
 		return self.blocks[-1].opcodes[-1].pc
 
-end_of_block_opcodes = [
-	"JUMP",
-	"JUMPI",
-	"STOP",
-	"REVERT",
-	"RETURN",
-]
-start_of_block_opcodes = [
-	"JUMPDEST"
-]
+
 def get_basic_blocks(opcodes) -> List[BasicBlock]:
 	blocks = []
 	current_block = BasicBlock(
 		opcodes=[]
 	)
 	for _, i in enumerate(opcodes):
-		if i.name in end_of_block_opcodes:
+		if i.name in END_OF_BLOCK_OPCODES:
 			current_block.opcodes.append(i)
 			# reset
 			blocks.append(current_block)
 			current_block = BasicBlock(
 				opcodes=[]
 			)
-		elif i.name in start_of_block_opcodes:
+		elif i.name in START_OF_BLOCK_OPCODES:
 			blocks.append(current_block)
 			# reset
 			current_block = BasicBlock(
@@ -193,7 +194,7 @@ def get_calling_blocks(opcodes):
 					variable_counter += 1
 				pc = opcode.pc
 				# The block will just fallthrough to the next block in this case.
-				if is_last_opcode and (pc + 1) in lookup_blocks and not opcode.name in end_of_block_opcodes:
+				if is_last_opcode and (pc + 1) in lookup_blocks and not opcode.name in END_OF_BLOCK_OPCODES:
 					blocks.append(
 						(lookup_blocks[pc + 1], evm.clone(), block)
 					)
@@ -211,13 +212,6 @@ def get_calling_blocks(opcodes):
 			connections[i.start_offset] = True
 			connections[node_id] = True
 	raw_blocks = list(filter(lambda x: x.start_offset in connections, raw_blocks))
-	
-#	for i in raw_blocks:
-#		executions = i.execution_trace
-#		ids = []
-#		for i in executions:
-#			ids.append(hashlib.sha256("\n".join(list(map(str, i.executions))).encode()).hexdigest())
-#		print(ids)
 
 	blocks_lookup = {}
 	for i in raw_blocks:
@@ -227,4 +221,3 @@ def get_calling_blocks(opcodes):
 		blocks=raw_blocks,
 		blocks_lookup=blocks_lookup,
 	)
-	

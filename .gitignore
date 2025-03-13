@@ -1,3 +1,5 @@
 __pycache__
 debug.venom
-test.vy
+*.vy
+*.sol
+output
