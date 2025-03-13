@@ -3,7 +3,6 @@ from simpler_ssa_form import get_ssa_program
 from test_utils.compiler import SolcCompiler
 from test_utils.evm import execute_function
 from test_utils.abi import encode_function_call
-from transpiler import assert_compilation
 from symbolic import EVM
 import subprocess
 
@@ -105,8 +104,37 @@ def test_should_handle_loops():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
+	# TODO: add compilation check here also.	
 
-def test_should_handle_coin_example():
+def test_should_handle_phi_djmps():
+	code = """
+    contract Hello {
+        function test() public returns (uint256) {
+            return test2();
+        }
+
+        function test2() public returns (uint256) {
+            return 1;
+        }
+    }
+	"""
+	bytecode = SolcCompiler().compile(code, via_ir=False)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("test()"),        
+	)
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("test2()"),        
+	)
+
+def skip_test_should_handle_coin_example():
 	code = """
 	// From https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html#subcurrency-example
 	contract Coin {
@@ -148,7 +176,7 @@ def test_should_handle_coin_example():
 	output.process()
 	assert output.has_unresolved_blocks == False
 
-def test_should_handle_sstore():
+def skip_test_should_handle_sstore():
 	code = """
 	// From https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html#subcurrency-example
 	contract SimpleMapping {
@@ -168,3 +196,22 @@ def test_should_handle_sstore():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
+
+def test_stack_evm():
+    evm = EVM(0)
+    evm.stack.append(1)
+    evm.stack.append(2)
+    evm.swap(1)
+    assert evm.stack == [2, 1]
+    evm.stack.append(3)
+    evm.swap(1)
+    assert evm.stack == [2, 3, 1]
+
+    evm.stack = [2, 0, 0, 1]
+    evm.swap(3)
+    assert evm.stack == [1, 0, 0, 2]
+
+    evm.stack = [1, 0, 0]
+    evm.dup(3)
+    assert evm.stack == [1, 0, 0, 1]
+

@@ -13,10 +13,10 @@ command=$1
 file=$2
 
 if [[ "$command" == "generate" ]]; then
-    echo "Generating from file: $file"
+    echo "Generating Venom IR from vyper file: $file"
     vyper --experimental-codegen -f bb_runtime $file > output.venom
 elif [[ "$command" == "compile" ]]; then
-    echo "Compiling file: $file"
+    echo "Compiling Venom IR: $file"
     python3 -m vyper.cli.venom_main $file
 else
     echo "Invalid command: $command"

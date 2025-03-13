@@ -45,7 +45,7 @@ class Arguments:
 	traces: List[int]
 
 	def __str__(self):
-		return ",".join(map(mapper, self.arguments))
+		return ", ".join(map(mapper, self.arguments))
 
 	def __hash__(self):
 		return int(hashlib.sha256(str(self).encode()).hexdigest(), 16)
@@ -86,10 +86,10 @@ class Opcode:
 
 	def __str__(self):
 		if self.instruction.resolved_arguments is not None and len(self.instruction.resolved_arguments.arguments) > 0:
-			ids = ",".join(map(str, self.instruction.resolved_arguments.arguments))
+			ids = ", ".join(map(str, self.instruction.resolved_arguments.arguments))
 			return f"{self.instruction.name.lower()} {ids}"
 		elif len(self.instruction.arguments) > 0:
-			ids = ",".join(map(lambda x: "?", list(range(len(list(self.instruction.arguments.entries)[0].arguments)))))
+			ids = ", ".join(map(lambda x: "?", list(range(len(list(self.instruction.arguments.entries)[0].arguments)))))
 			return f"{self.instruction.name.lower()} {ids}"
 		else:
 			return f"{self.instruction.name.lower()}"
@@ -157,21 +157,23 @@ class SsaBlock:
 							if i.instruction.name != "JMP":
 								value = mapper(v.arguments[argument])
 								if value.isnumeric():
-									var = f"%i_{mapper(v.arguments[argument])}"
-									for g in self.preceding_opcodes:
-										if var in g.instruction.name:
-											break
-									else:
-										self.preceding_opcodes.append(
-											Opcode(
-												Instruction(
-													name=(f"{var} = {mapper(v.arguments[argument])}"),
-													arguments=ArgumentsHandler([]),
-													resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
-												),
-												variable_id=-1,
-											)
-										)
+									if False:
+										var = f"%i_{mapper(v.arguments[argument])}"
+										for g in self.preceding_opcodes:
+											if var in g.instruction.name:
+												break
+										else:
+											self.preceding_opcodes.append(
+												Opcode(
+													Instruction(
+														name=(f"{var} = {mapper(v.arguments[argument])}"),
+														arguments=ArgumentsHandler([]),
+														resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
+													),
+													variable_id=-1,
+												)
+											)							
+									var = mapper(v.arguments[argument])
 									phi_functions.append(
 										(f"@block_{v.parent_block}, {var}")
 									)
@@ -182,32 +184,42 @@ class SsaBlock:
 									)
 									values.add(mapper(v.arguments[argument]))
 							else:
-								var = v.arguments[argument].id.value
-								self.preceding_opcodes.append(
-									Opcode(
-										Instruction(
-											name=(f"%i_{var} = {var}"),
-											arguments=ArgumentsHandler([]),
-											resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
-										),
-										variable_id=-1,
+								if True:
+									var = v.arguments[argument]#.id.value
+									val_id = var.id.value
+									var_name = f"%block_{val_id}"
+									# self.preceding_opcodes.append(
+									dict[int(v.parent_block.replace("0x",""), 16)].preceding_opcodes.append(
+										Opcode(
+											Instruction(
+												name=(f"{var_name} = {var}"),
+												arguments=ArgumentsHandler([]),
+												resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
+											),
+											variable_id=-1,
+										)
 									)
-								)
-								phi_functions.append(
-									f"@block_{v.parent_block}, %i_{var}"
-								)
+
+									phi_functions.append(
+										f"@block_{v.parent_block}, {var_name}"
+									)
+								else:
+									var = v.arguments[argument]
+									phi_functions.append(
+										f"@block_{v.parent_block}, {var}"
+									)
 						
 						if len(values) == 1:
 							resolved_arguments.append(values.pop())
 						else:
 							i.instruction.resolved_arguments = Arguments(
 								arguments=[
-									",".join(phi_functions)
+									", ".join(phi_functions)
 								],
 								parent_block=None,
 								traces=[],
 							)
-							a = ",".join(phi_functions)
+							a = ", ".join(phi_functions)
 							self.preceding_opcodes.append(
 								Opcode(
 									Instruction(
@@ -224,6 +236,7 @@ class SsaBlock:
 									djmp_arguments.append(
 										f"@block_{hex(v.arguments[argument].id.value)}"
 									)
+
 								#self.preceding_opcodes.append(
 								#	Opcode(
 								#		Instruction(
@@ -275,7 +288,7 @@ class SsaBlock:
 								ids.append(str(v))
 							else:
 								raise Exception(f"Unknown {v}")
-						opcode_trace.add(",".join(ids))
+						opcode_trace.add(", ".join(ids))
 					if len(opcode_trace) == 1:
 						i.instruction.resolved_arguments = Arguments(
 							arguments=list(map(mapper, i.instruction.arguments.first().arguments)),
@@ -302,22 +315,33 @@ class SsaBlock:
 						block = dict[prev]
 						phi_functions = []
 						for v in i.instruction.arguments.entries:
-							val = (v.arguments[0].id.value)
-							block.preceding_opcodes.append(
-								Opcode(
-									Instruction(
-										name=(f"%i_{val} = {val}"),
-										arguments=ArgumentsHandler([]),
-										resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
-									),
-									variable_id=-1,
+							if True:
+								val = mapper(v.arguments[0])
+								val_id = (v.arguments[0].id.value)
+								var_name = f"%block_{val_id}"
+#								block.preceding_opcodes.append(
+#								)
+								#print(dict.keys())
+								dict[(v.traces[found_split_point + 1])].preceding_opcodes.append(
+									Opcode(
+										Instruction(
+											name=(f"{var_name} = {val}"),
+											arguments=ArgumentsHandler([]),
+											resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
+										),
+										variable_id=-1,
+									)
 								)
-							)
-							phi_functions.append(
-								(f"@block_{hex(v.traces[found_split_point + 1])}, %i_{val}")
-							)
+								phi_functions.append(
+									(f"@block_{hex(v.traces[found_split_point + 1])}, {var_name}")
+								)
+							else:
+								val = v.arguments[0]
+								phi_functions.append(
+									(f"@block_{hex(v.traces[found_split_point + 1])}, {val}")
+								)
 
-						a = ",".join(phi_functions)
+						a = ", ".join(phi_functions)
 						block.preceding_opcodes.append(
 							Opcode(
 								Instruction(
