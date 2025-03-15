@@ -9,7 +9,9 @@ from blocks import END_OF_BLOCK_OPCODES
 import argparse
 import subprocess
 from collections import defaultdict
-from ssa_structures import SsaProgram, SsaBlock, Opcode, Arguments, ArgumentsHandler, Block, Instruction
+from ssa_structures import SsaProgram, SsaBlock, Opcode, Arguments, Block, Instruction
+from ordered_set import OrderedSet
+from cfg import save_cfg
 
 def get_ssa_program(bytecode) -> SsaProgram:
 	basic_blocks = get_basic_blocks(get_opcodes_from_bytes(bytecode))
@@ -32,8 +34,8 @@ def get_ssa_program(bytecode) -> SsaProgram:
 			id=block.start_offset,
 			opcodes=[],
 			preceding_opcodes=[],
-			incoming=set(),
-			outgoing=set(),
+			incoming=OrderedSet(),
+			outgoing=OrderedSet(),
 		) 
 		if not ssa_block.id in converted_blocks:
 			converted_blocks[ssa_block.id] = ssa_block
@@ -50,6 +52,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					id=variable_counter, 
 					value=opcode.value(),
 					pc=opcode.pc,
+					block=block.start_offset,
 				)
 				evm.stack.append(var)
 				evm.step()
@@ -159,7 +162,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 								arguments=[
 									condition,
 									Block(next_offset, pc=opcode.pc), 
-									Block(ConstantValue(None, second_offset, None), pc=opcode.pc)
+									Block(ConstantValue(None, second_offset, None, None), pc=opcode.pc)
 								],
 								parent_block=(hex(parent.id) if parent is not None else None),
 								traces=traces,
@@ -176,7 +179,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							arguments=[
 								condition,
 								Block(next_offset, pc=opcode.pc), 
-								Block(ConstantValue(None, second_offset, None), pc=opcode.pc)
+								Block(ConstantValue(None, second_offset, None, None), pc=opcode.pc)
 							],
 							parent_block=(hex(parent.id) if parent is not None else None),
 							traces=traces,
@@ -249,6 +252,8 @@ def transpile_from_bytecode(bytecode):
 	output.process()
 	for blocks in output.blocks:
 		block = []
+		for opcode in blocks.preceding_opcodes:
+			block.append(f"\t{opcode} \\l")
 		for opcode in blocks.opcodes:
 			block.append(f"\t{opcode} \\l")
 		if len(block) == 0:
@@ -257,9 +262,14 @@ def transpile_from_bytecode(bytecode):
 		dot.node(hex(blocks.id), "".join(block), shape="box")
 		for edge in blocks.outgoing:
 			dot.edge(hex(blocks.id), hex(edge))
-	dot.render("output/ssa".replace(".png",""), cleanup=True)
+	dot.render("output/ssa", cleanup=True)
 	with open("output/generated.venom", "w") as file:
 		file.write(output.convert_into_vyper_ir(strict=False))
+
+	save_cfg(
+		bytecode,
+		"output/cfg.png"
+	)
 
 	result = subprocess.run(["python3", "-m", "vyper.cli.venom_main", "output/generated.venom"], capture_output=True, text=True)
 	assert result.returncode == 0, result.stderr

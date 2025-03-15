@@ -37,9 +37,10 @@ class SymbolicOpcode(SymbolicValue):
 		return self.__str__()
 
 class ConstantValue(SymbolicValue):
-	def __init__(self, id, value, pc):
+	def __init__(self, id, value, pc, block):
 		super().__init__(id, pc)
 		self.value = value
+		self.block = block
 
 	def __str__(self):
 		return f"ConstantValue({hex(self.value)})"	

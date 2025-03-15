@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List
+from typing import List, Callable, Union
 from dataclasses import dataclass
 from symbolic import ConstantValue, SymbolicOpcode
 from typing import List, Dict, Optional, Set, Any
@@ -27,10 +27,14 @@ class Block:
 
 	def __str__(self):
 		return f"@block_{hex(self.id.value)}"
+	
+	def __hash__(self):
+		return self.id.value
+
 
 @dataclass
 class Arguments:
-	arguments: List[Any]
+	arguments: List[Union[ConstantValue, SymbolicOpcode, Block]]
 	parent_block: str 
 	traces: List[int]
 
@@ -40,30 +44,24 @@ class Arguments:
 	def __hash__(self):
 		return int(hashlib.sha256(str(self).encode()).hexdigest(), 16)
 
-# TODO: replace by ordered set
-class ArgumentsHandler:
-	def __init__(self, v=[]):
-		self.entries: List[Arguments] = v
-		self.seen = list(map(lambda x: hash(x), v))
-
-	def first(self):
-		return self.entries[0]
-
-	def append(self, i: Arguments):
-		if hash(i) not in self.seen:		
-			self.seen.append(hash(i))
-			self.entries.append(i)
-
-	def __len__(self):
-		return len(self.seen)
+	def __eq__(self, other):	
+		return hash(other) == hash(self)
+	
+	@property
+	def parent_block_id(self):
+		return int(self.parent_block.replace("0x",""), 16)
 
 @dataclass
 class Instruction:
 	name: str 
 	# All the argument values this instructions has had during execution.
-	arguments: OrderedSet
+	arguments: OrderedSet[Arguments]
 	# The resolved arguments
 	resolved_arguments: Optional[Arguments]
+
+	@property
+	def arg_count(self):
+		return len(self.arguments[0].arguments)
 
 @dataclass
 class Opcode:
@@ -80,7 +78,7 @@ class Opcode:
 			ids = ", ".join(map(str, self.instruction.resolved_arguments.arguments))
 			return f"{self.instruction.name.lower()} {ids}"
 		elif len(self.instruction.arguments) > 0:
-			ids = ", ".join(map(lambda x: "?", list(range(len(list(self.instruction.arguments)[0].arguments)))))
+			ids = ", ".join(map(lambda _: "?", list(range(len(list(self.instruction.arguments)[0].arguments)))))
 			return f"{self.instruction.name.lower()} {ids}"
 		else:
 			return f"{self.instruction.name.lower()}"
@@ -89,19 +87,21 @@ class Opcode:
 	def is_unresolved(self):
 		if len(self.instruction.arguments) == 0:
 			return False
-		if not len(self.instruction.arguments) > 0 and len(self.instruction.arguments[0].arguments) > 0:
+		if not len(self.instruction.arguments) > 0 and len(self.instruction.arg_count) > 0:
 			return False
 		if self.instruction.resolved_arguments is None:
 			return True
 		return False
 
 	def to_vyper_ir(self):
+		arguments = self.get_arguments()
 		if self.instruction.name == "JUMPI":
-			arguments = self.get_arguments()
 			return f"jnz {arguments[0]}, {arguments[1]}, {arguments[2]}"
-		elif self.instruction.name == "JMP":
-			arguments = self.get_arguments()
+		elif self.instruction.name == "JMP" and len(arguments) == 1:
 			return f"jmp {arguments[0]}"
+		elif self.instruction.name == "JMP" and len(arguments) > 1:
+			self.instruction.name = "djmp"
+			return str(self).strip()
 		else:
 			return str(self).strip()
 
@@ -110,15 +110,15 @@ def find_split_index(i: Opcode):
 	index = 0
 	prev = None
 	while True:
-		current = set()
-		for v in i.instruction.arguments.entries:
+		current = OrderedSet()
+		for v in i.instruction.arguments:
 			if index < len(v.traces):
 				current.add(v.traces[index])
-		if len(current) == len(i.instruction.arguments.entries):
+		if len(current) == len(i.instruction.arguments):
 			found_split_point = index - 1
 			break
 		index += 1
-		prev = current.pop()
+		prev = current[0]
 	assert found_split_point != -1
 	return found_split_point, prev
 
@@ -129,34 +129,26 @@ def create_resolved_arguments(resolved_arguments):
 		traces=[],
 	)
 
-def resolve_phi_functions(entries: List[Arguments], argument: int, is_jmp: bool, blocks: Dict[str, Any], parent_block):
+def resolve_phi_functions(
+		entries: List[Arguments], 
+		argument: int,
+		blocks: Dict[str, 'SsaBlock'], 
+		parent_block: Callable[[Arguments], int],
+		block: 'SsaBlock',
+	):
 	phi_functions = []
-	values = set([])
-	for v in entries:
-		if not is_jmp:
-			var = v.arguments[argument]
-			value = mapper(var)
-			if value.isnumeric():						
-				phi_functions.append(
-					(f"@block_{v.parent_block}, {value}")
-				)
-				values.add(value)
-			else:
-				phi_functions.append(
-					(f"@block_{v.parent_block}, {value}")
-				)
-				values.add(value)
-		else:
-			var = v.arguments[argument]
-			val_id = var.id.value
+	values = OrderedSet([])
+	for args in entries:
+		var_value = args.arguments[argument]
+		if isinstance(var_value, Block):
+			val_id = var_value.id.value
 			var_name = f"%block_{val_id}"
-
-			block_id = parent_block(v)
+			block_id = parent_block(args)
 			blocks[block_id].preceding_opcodes.append(
 				Opcode(
 					Instruction(
-						name=(f"{var_name} = {var}"),
-						arguments=ArgumentsHandler([]),
+						name=(f"{var_name} = {var_value}"),
+						arguments=OrderedSet([]),
 						resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
 					),
 					variable_id=-1,
@@ -166,43 +158,90 @@ def resolve_phi_functions(entries: List[Arguments], argument: int, is_jmp: bool,
 			phi_functions.append(
 				f"@block_{block_id}, {var_name}"
 			)
+		elif isinstance(var_value, ConstantValue):
+			val_id = var_value.id
+			var_name = f"%{val_id}"
+			"""
+			This block id, might not be the correct one.
+			"""
+			if var_value.block == block.id:
+				# THis can't be a phi function
+				values.append(mapper(var_value))
+			else:
+				block_id = var_value.block
+				# TODO: there should be a better way of solving this
+				if block_id not in block.incoming and block.id in args.traces:
+					block_id = args.traces[
+						args.traces.index(block.id) + 1
+					]
+					assert block_id != block.id
+
+				blocks[block_id].preceding_opcodes.append(
+					Opcode(
+						Instruction(
+							name=(f"{var_name} = {var_value.value}"),
+							arguments=OrderedSet([]),
+							resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
+						),
+						variable_id=-1,
+					)
+				)
+				block_id = hex(block_id) if type(block_id) == int else block_id
+				phi_functions.append(
+					f"@block_{block_id}, {var_name}"
+				)
+		else:			
+			value = mapper(var_value)
+			parent_id = args.parent_block
+			if isinstance(var_value, SymbolicOpcode):
+				parent_id = hex(var_value.block)
+				if var_value.block not in block.incoming and block.id in args.traces:
+					parent_id = hex(args.traces[
+						args.traces.index(block.id) + 1
+					])
+
+			phi_functions.append(
+				(f"@block_{parent_id}, {value}")
+			)
+			values.add(value)
 	return values, phi_functions
 
-def resolve_phi_function_long_distance(entries: List[Arguments], block, phi_functions_counter):
-	arguments = []
-	for idx in range(len(entries[0].arguments)):
-		values = OrderedSet()
-		parents = OrderedSet()
-		for v in entries:
-			arg = v.arguments[idx]
-			values.add(mapper(arg))
-			if isinstance(arg, SymbolicOpcode):
-				parents.add(arg.block)
-				
+def handle_resolve_arguments(i: Opcode, blocks: Dict[str, 'SsaBlock'], phi_counter: 'PhiCounter', block: 'SsaBlock', parent_block):
+	instruction_args = i.instruction.arguments
+	resolved_arguments = []
+	for argument in range((i.instruction.arg_count)):
+		values, phi_functions = resolve_phi_functions(
+			instruction_args,
+			argument,
+			blocks,
+			parent_block=parent_block,
+			block=block,
+		)
 		if len(values) == 1:
-			arguments.append(values.pop())
+			resolved_arguments.append(values.pop())
 		else:
-			phi_functions = []
-			for (value, parent) in zip(values, parents, strict=True):
-				phi_functions.append(
-					f"@block_{hex(parent)}, {value}"
-				)
+			phi_value = phi_counter.increment()
 			block.preceding_opcodes.append(
 				construct_phi_function(
 					phi_functions,
-					phi_functions_counter
+					phi_value
 				)
 			)
-			arguments.append(f"%phi{phi_functions_counter}")	
-	return arguments
+			resolved_arguments.append(f"%phi{phi_value}")
+			if i.instruction.name == "JMP":
+				resolved_arguments += [
+					f"@block_{hex(v.arguments[argument].id.value)}"
+					for v in instruction_args	
+				]
+	return resolved_arguments
 
-def construct_phi_function(phi_functions, phi_functions_counter):
-	a = ", ".join(phi_functions)
+def construct_phi_function(phi_function_operands, phi_functions_counter):
+	value = ", ".join(phi_function_operands)
 	return (
 		Opcode(
 			Instruction(
-				name=f"%phi{phi_functions_counter} = phi {a}",
-				arguments=ArgumentsHandler([]),
+				name=f"%phi{phi_functions_counter} = phi {value}",
+				arguments=OrderedSet([]),
 				resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
 			),
 			variable_id=-1,
@@ -210,29 +249,51 @@ def construct_phi_function(phi_functions, phi_functions_counter):
 	)	
 
 def check_unique_parents(i: Opcode):
-	seen_parents = {}
-	has_unique_parents = True
-	for entry in i.instruction.arguments.entries:
+	seen_parents = set()
+	for entry in i.instruction.arguments:
 		if entry.parent_block in seen_parents:
-			has_unique_parents = False
-	return has_unique_parents	
+			return False
+		seen_parents.add(entry.parent_block)
+	return True
+
+@dataclass
+class PhiCounter:
+	value: int
+
+	def increment(self):
+		old = self.value
+		self.value += 1
+		return old
 
 @dataclass
 class SsaBlock:
 	id: str
 	preceding_opcodes: List[Opcode]
 	opcodes: List[Opcode]
-	incoming: Set[str]
-	outgoing: Set[str]
+	incoming: OrderedSet[str]
+	outgoing: OrderedSet[str]
 
 	def remove_irrelevant_opcodes(self):
 		for i in list(self.opcodes):
 			if i.instruction.name in IRRELEVANT_SSA_OPCODES:
 				self.opcodes.remove(i)
+		if len(self.opcodes) == 0:
+			assert len(self.outgoing) == 1
+			self.opcodes.append(
+				Opcode(
+					Instruction(
+						name=f"jmp",
+						arguments=OrderedSet([]),
+						resolved_arguments=Arguments(arguments=[
+							Block(ConstantValue(-1, self.outgoing[0], -1, -1), -1)
+						], parent_block="", traces=[])
+					),
+					variable_id=None,
+				)
+			)
 		return self
 	
-	def resolve_arguments(self, blocks: Dict[str, 'SsaBlock']):
-		global PHI_FUNCTIONS_COUNTER
+	def resolve_arguments(self, blocks: Dict[str, 'SsaBlock'], phi_counter: PhiCounter):
 		for i in list(self.opcodes):
 			if i.variable_id is not None:
 				i.instruction.name = f"%{i.variable_id} = {i.instruction.name}"
@@ -246,106 +307,51 @@ class SsaBlock:
 			# We have seen multiple variables used
 			elif len(i.instruction.arguments) > 1:
 				has_unique_parents = check_unique_parents(i)
+						
 				if has_unique_parents and len(self.incoming) > 1:
-					resolved_arguments = []
-					djmp_arguments = []
-					for argument in range(len(i.instruction.arguments.entries[0].arguments)):
-						values, phi_functions = resolve_phi_functions(
-							i.instruction.arguments.entries,
-							argument,
-							i.instruction.name == "JMP",
-							blocks,
-							parent_block=lambda v: int(v.parent_block.replace("0x",""), 16),
-						)
-						if len(values) == 1:
-							resolved_arguments.append(values.pop())
-						else:
-							self.preceding_opcodes.append(
-								construct_phi_function(
-									phi_functions,
-									PHI_FUNCTIONS_COUNTER
-								)
-							)
-							resolved_arguments.append(f"%phi{PHI_FUNCTIONS_COUNTER}")
-							if i.instruction.name == "JMP": 	
-								for v in i.instruction.arguments:
-									djmp_arguments.append(
-										f"@block_{hex(v.arguments[argument].id.value)}"
-									)
-							PHI_FUNCTIONS_COUNTER += 1
-					combined = (
-						resolved_arguments + djmp_arguments
-						if i.instruction.name == "JMP" else resolved_arguments
+					resolved_arguments = handle_resolve_arguments(
+						i,
+						blocks,
+						phi_counter,
+						block=self,
+						parent_block=lambda v: v.parent_block_id
 					)
-					if i.instruction.name == "JMP":
-						i.instruction.name = "djmp"
 					i.instruction.resolved_arguments = create_resolved_arguments(
-						combined
+						resolved_arguments
 					)
+				elif i.instruction.name == "JMP":
+					found_split_point, prev = find_split_index(i)
+					block = blocks[prev]
+					resolved_arguments = handle_resolve_arguments(
+						i,
+						blocks,
+						phi_counter,
+						block=block,
+						parent_block=lambda v: v.traces[found_split_point + 1],
+					)
+					i.instruction.resolved_arguments = create_resolved_arguments(resolved_arguments)
 				else:
-					opcode_trace = set([
-						",".join(list(map(mapper, i.arguments)))
-						for i in i.instruction.arguments.entries
-					])
-					if len(opcode_trace) == 1:
-						i.instruction.resolved_arguments = Arguments(
-							arguments=list(map(mapper, i.instruction.arguments[0].arguments)),
-							parent_block=None,
-							traces=[],
-						)
-					elif i.instruction.name == "JMP":
-						found_split_point, prev = find_split_index(i)
-						values, phi_functions = resolve_phi_functions(
-							i.instruction.arguments.entries,
-							0,
-							is_jmp=True,
-							blocks=blocks,
-							parent_block=lambda v: v.traces[found_split_point + 1],
-						)
-						blocks[prev].preceding_opcodes.append(
-							construct_phi_function(
-								phi_functions,
-								PHI_FUNCTIONS_COUNTER
-							)
-						)
-						# THen we create a phi functions inside prev.
-						djmp_arguments = [
-							f"@block_{hex(v.arguments[0].id.value)}"
-							for v in i.instruction.arguments.entries
-						]
-						djmp_arguments.insert(
-							0,
-							f"%phi{PHI_FUNCTIONS_COUNTER}"
-						)
-						i.instruction.name = "djmp"
-						i.instruction.resolved_arguments = create_resolved_arguments(
-							djmp_arguments
-						)
-						PHI_FUNCTIONS_COUNTER += 1
-					elif i.instruction.name == "MSTORE":
-						found_split_point, prev = find_split_index(i)
-						block = blocks[prev]
-						arguments = resolve_phi_function_long_distance(
-							i.instruction.arguments.entries,
-							block,
-							PHI_FUNCTIONS_COUNTER,
-						)
-						PHI_FUNCTIONS_COUNTER += 1
-						i.instruction.resolved_arguments = create_resolved_arguments(arguments)
-	
+					found_split_point, prev = find_split_index(i)
+					block = blocks[prev]
+					resolved_arguments = handle_resolve_arguments(
+						i,
+						blocks,
+						phi_counter,
+						block=block,
+						parent_block=None,
+					)
+					i.instruction.resolved_arguments = create_resolved_arguments(resolved_arguments)
+
 		return self
 	
 	def debug_log_unresolved_arguments(self):
-		for i in list(self.opcodes):
-			if i.is_unresolved:
-				print(str(i))
-				print("\t" + str(list(map(lambda x: [str(x), x.parent_block], i.instruction.arguments.entries))), list(map(lambda x: hash(x), i.instruction.arguments.entries)))
-				for i in i.instruction.arguments.entries:
-					print(f"\t{i}")
-				#print("\t" + str(i.instruction.arguments.entries))
-				#if i.variable_id == "48":
-				#	print("?")					
-		
+		for opcode in list(self.opcodes):
+			if opcode.is_unresolved:
+				print(str(opcode))
+				print("\t" + str(list(map(lambda x: [str(x), x.parent_block], opcode.instruction.arguments))), list(map(lambda x: hash(x), opcode.instruction.arguments)))
+				for arg in opcode.instruction.arguments:
+					print(f"\t{arg}")
+
 	def __str__(self):
 		lines = [
 			f"block_{hex(self.id)}:" if self.id > 0 else "global:"
@@ -359,6 +365,7 @@ class SsaBlock:
 @dataclass
 class SsaProgram:
 	blocks: List[SsaBlock]
+	phi_counter = PhiCounter(0)
 
 	def process(self):		
 		lookup = {
@@ -366,7 +373,7 @@ class SsaProgram:
 		}
 		for block in self.blocks:
 			block.remove_irrelevant_opcodes()
-			block.resolve_arguments(lookup)
+			block.resolve_arguments(lookup, self.phi_counter)
 		print("Unresolved instructions: ")
 		for block in self.blocks:
 			block.debug_log_unresolved_arguments()

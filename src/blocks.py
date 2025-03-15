@@ -139,6 +139,7 @@ def get_calling_blocks(opcodes):
 					id=variable_counter, 
 					value=opcode.value(),
 					pc=opcode.pc,
+					block=block.start_offset,
 				)
 				evm.stack.append(var)
 				evm.step()

@@ -107,15 +107,15 @@ def test_should_handle_loops():
 
 def test_should_handle_phi_djmps():
 	code = """
-    contract Hello {
-        function test() public returns (uint256) {
-            return test2();
-        }
+	contract Hello {
+		function test() public returns (uint256) {
+			return test2();
+		}
 
-        function test2() public returns (uint256) {
-            return 1;
-        }
-    }
+		function test2() public returns (uint256) {
+			return 1;
+		}
+	}
 	"""
 	bytecode = SolcCompiler().compile(code, via_ir=False)
 	output = get_ssa_program(bytecode)
@@ -135,14 +135,14 @@ def test_should_handle_phi_djmps():
 
 def test_should_handle_storage():
 	code = """
-    contract Hello {
+	contract Hello {
 		uint256 public val = 0;
 
 		function set() public returns (uint) {
 			val = 50;
 			return val;
 		}
-    }
+	}
 	"""
 	bytecode = SolcCompiler().compile(code, via_ir=False)
 	output = get_ssa_program(bytecode)
@@ -159,7 +159,7 @@ def test_should_handle_storage():
 # TODO: need to handle cycles in the CFG.
 def skip_test_should_handle_control_flow():
 	code = """
-    contract Hello {
+	contract Hello {
 		function sumUpTo() public pure returns (uint) {
 			uint sum = 0;
 			for (uint i = 1; i <= 10; i++) {
@@ -167,7 +167,7 @@ def skip_test_should_handle_control_flow():
 			}
 			return sum;
 		}
-    }
+	}
 	"""
 	bytecode = SolcCompiler().compile(code, via_ir=False)
 	output = get_ssa_program(bytecode)
@@ -182,8 +182,104 @@ def skip_test_should_handle_control_flow():
 	)
 	"""
 
+def test_nested_if_conditions_explicit():
+	code = """
+	contract Hello {
+		function test() public returns (uint256) {
+			if (5 < 10) {        
+				return 2;
+			}
+			return 0;
+		}
+	}
+	"""
+	bytecode = SolcCompiler().compile(code, via_ir=False)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("test()"),
+	)
 
-def skip_test_should_handle_coin_example():
+def test_nested_if_conditions_params_explicit():
+	code = """
+	contract Hello {
+		function test() public returns (uint256) {
+			return a(15);
+		}
+
+		function a(uint256 a) internal returns (uint256){
+			if (a > 10) {        
+				return 2;
+			}
+		}
+	}
+	"""
+	bytecode = SolcCompiler().compile(code, via_ir=False)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("test()"),
+	)
+
+def test_block_conditions():
+	code = """
+	contract Hello {
+		function test() public returns (uint256) {
+			if (block.number < 15){
+				return 2;
+			}
+			return 1;
+		}
+	}
+	"""
+	bytecode = SolcCompiler().compile(code, via_ir=False)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("test()"),
+	)
+
+def test_multiple_functions():
+	code = """
+	contract Hello {
+		function timestamp() public returns (uint256) {
+			return block.timestamp;
+		}
+
+		function number() public returns (uint256) {
+			return block.number;
+		}
+	}
+	"""
+	bytecode = SolcCompiler().compile(code, via_ir=False)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("timestamp()"),
+	)
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("number()"),
+	)
+
+def test_should_handle_coin_example():
 	code = """
 	// From https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html#subcurrency-example
 	contract Coin {
@@ -224,8 +320,10 @@ def skip_test_should_handle_coin_example():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
+	if False:
+		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
 
-def skip_test_should_handle_sstore():
+def test_should_handle_sstore():
 	code = """
 	// From https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html#subcurrency-example
 	contract SimpleMapping {
@@ -245,22 +343,29 @@ def skip_test_should_handle_sstore():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
+	if False:
+		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+		assert execute_evm(
+			bytecode,
+			transpiled,
+			encode_function_call("setResults(address)", ["address"], ['0x' + 'ff' * 20]),
+		)
 
 def test_stack_evm():
-    evm = EVM(0)
-    evm.stack.append(1)
-    evm.stack.append(2)
-    evm.swap(1)
-    assert evm.stack == [2, 1]
-    evm.stack.append(3)
-    evm.swap(1)
-    assert evm.stack == [2, 3, 1]
+	evm = EVM(0)
+	evm.stack.append(1)
+	evm.stack.append(2)
+	evm.swap(1)
+	assert evm.stack == [2, 1]
+	evm.stack.append(3)
+	evm.swap(1)
+	assert evm.stack == [2, 3, 1]
 
-    evm.stack = [2, 0, 0, 1]
-    evm.swap(3)
-    assert evm.stack == [1, 0, 0, 2]
+	evm.stack = [2, 0, 0, 1]
+	evm.swap(3)
+	assert evm.stack == [1, 0, 0, 2]
 
-    evm.stack = [1, 0, 0]
-    evm.dup(3)
-    assert evm.stack == [1, 0, 0, 1]
+	evm.stack = [1, 0, 0]
+	evm.dup(3)
+	assert evm.stack == [1, 0, 0, 1]
 
