@@ -19,12 +19,13 @@ class SymbolicValue:
 
 
 class SymbolicOpcode(SymbolicValue):
-	def __init__(self, id, opcode, inputs, pc):
+	def __init__(self, id, opcode, inputs, pc, block):
 		super().__init__(id, pc)
 		#self.id = id
 		self.opcode = opcode
 		self.inputs = inputs
 		self.pc = pc
+		self.block = block
 
 	def __str__(self):
 		return f"SymbolicOpcode({self.opcode}, {self.inputs}, {self.pc})"

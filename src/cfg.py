@@ -3,8 +3,12 @@ from opcodes import get_opcodes_from_bytes
 from blocks import get_calling_blocks
 import graphviz
 
-def create_cfg(bytecode, name="cfg.png", flatten=False):
+def create_cfg(bytecode):
 	cfg = get_calling_blocks(get_opcodes_from_bytes(bytecode))
+	return cfg
+
+def save_cfg(bytecode, name="cfg.png", render=False):
+	cfg = create_cfg(bytecode)
 	dot = graphviz.Digraph(comment='cfg', format='png')
 
 	for cfg_block in cfg.blocks:
@@ -33,4 +37,4 @@ if __name__ == "__main__":
     }
 	"""
 	print(SolcCompiler().compile(code, via_ir=False).hex())
-	create_cfg(SolcCompiler().compile(code, via_ir=False))
+	save_cfg(SolcCompiler().compile(code, via_ir=False))

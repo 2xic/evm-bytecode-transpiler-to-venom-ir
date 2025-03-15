@@ -113,6 +113,7 @@ def get_calling_blocks(opcodes):
 	blocks: List[Tuple[CallGraphBlock, EVM, Optional[CallGraphBlock]]] = [
 		(lookup_blocks[0], EVM(pc=0), None)
 	]
+	visited = set()
 	while len(blocks) > 0:
 		(block, evm, parent_block) = blocks.pop(0)
 		if len(evm.stack) > 32:
@@ -149,32 +150,38 @@ def get_calling_blocks(opcodes):
 				evm.step()
 			elif opcode.name == "JUMP":
 				next_offset = evm.pop_item()
-				if isinstance(next_offset, ConstantValue):
-					block.outgoing.add(next_offset.value)
-					blocks.append(
-						(lookup_blocks[next_offset.value], evm.clone(), block)
-					)
-				else:
-					print(f"Cant resolve JUMP {next_offset}")
-				evm.step()
+				if next_offset not in visited:
+					if isinstance(next_offset, ConstantValue):
+						block.outgoing.add(next_offset.value)
+						blocks.append(
+							(lookup_blocks[next_offset.value], evm.clone(), block)
+						)
+					else:
+						print(f"Cant resolve JUMP {next_offset}")
+					evm.step()
+					visited.add(next_offset)
 			elif opcode.name == "JUMPI":
 				next_offset = evm.pop_item()
-				evm.pop_item()
-				evm.step()
-				if isinstance(next_offset, ConstantValue):
-					block.outgoing.add(next_offset.value)
-					blocks.append(
-						(lookup_blocks[next_offset.value], evm.clone(), block)
-					)
-				else:
-					print(f"Cant resolve JUMPI {next_offset}")
+				if next_offset not in visited:
+					evm.pop_item()
+					evm.step()
+					if isinstance(next_offset, ConstantValue):
+						block.outgoing.add(next_offset.value)
+						blocks.append(
+							(lookup_blocks[next_offset.value], evm.clone(), block)
+						)
+					else:
+						print(f"Cant resolve JUMPI {next_offset}")
+					visited.add(next_offset)
 
 				pc = opcode.pc + 1
-				if pc in lookup_blocks:
+				assert pc in lookup_blocks
+				if pc not in visited:
 					block.outgoing.add(pc)
 					blocks.append(
 						(lookup_blocks[pc], evm.clone(), block)
 					)
+					visited.add(pc)
 			else:
 				inputs = []
 				for i in range(opcode.inputs):
@@ -186,6 +193,7 @@ def get_calling_blocks(opcodes):
 							opcode=opcode.name, 
 							inputs=inputs,
 							pc=opcode.pc,
+							block=block.start_offset,
 						)
 					)
 					assert opcode.outputs == 1

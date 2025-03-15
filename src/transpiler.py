@@ -8,6 +8,7 @@ import graphviz
 from blocks import END_OF_BLOCK_OPCODES
 import argparse
 import subprocess
+from collections import defaultdict
 from ssa_structures import SsaProgram, SsaBlock, Opcode, Arguments, ArgumentsHandler, Block, Instruction
 
 def get_ssa_program(bytecode) -> SsaProgram:
@@ -21,6 +22,8 @@ def get_ssa_program(bytecode) -> SsaProgram:
 	converted_blocks = {}
 	variable_counter = 0
 	variable_id = {}
+	# TODO: might need to reason more about this, but we need to make sure we have explored the program a sufficient amount of times
+	visited = defaultdict(int)
 
 	while len(blocks) > 0:
 		(block, evm, parent, traces) = blocks.pop(0)
@@ -32,7 +35,6 @@ def get_ssa_program(bytecode) -> SsaProgram:
 			incoming=set(),
 			outgoing=set(),
 		) 
-		#print(block)
 		if not ssa_block.id in converted_blocks:
 			converted_blocks[ssa_block.id] = ssa_block
 		else:
@@ -61,7 +63,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 									parent_block=parent,
 									traces=traces,
 								),
-								arguments=ArgumentsHandler([
+								arguments=OrderedSet([
 									Arguments(
 										arguments=[var],
 										parent_block=parent,
@@ -80,7 +82,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 						instruction=Instruction(
 							name="DUP",
 							resolved_arguments=None,
-							arguments=ArgumentsHandler()
+							arguments=OrderedSet()
 						)
 					)
 				)
@@ -92,22 +94,25 @@ def get_ssa_program(bytecode) -> SsaProgram:
 						instruction=Instruction(
 							name="SWAP",
 							resolved_arguments=None,
-							arguments=ArgumentsHandler()
+							arguments=OrderedSet()
 						)
 					)
 				)
 			elif opcode.name == "JUMP":
 				next_offset = evm.pop_item()
 				assert isinstance(next_offset, ConstantValue)
-				blocks.append(
-					(blocks_lookup[next_offset.value], evm.clone(), ssa_block, [parent_id, ] + traces)
-				)
-				ssa_block.outgoing.add(next_offset.value)
+				if visited[(parent_id, next_offset)] < 10:
+					visited[next_offset] += 1
+					blocks.append(
+						(blocks_lookup[next_offset.value], evm.clone(), ssa_block, [parent_id, ] + traces)
+					)
+					ssa_block.outgoing.add(next_offset.value)
+					visited[(parent_id, next_offset)] += 1
 				if previous_op is None:
 					opcode = Opcode(
 						instruction=Instruction(
 							name="JMP",
-							arguments=ArgumentsHandler(
+							arguments=OrderedSet(
 								[
 									Arguments(
 										arguments=[Block(next_offset, pc=opcode.pc)],
@@ -133,19 +138,23 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				condition = evm.pop_item()
 				evm.step()
 				second_offset = opcode.pc + 1
-				assert isinstance(next_offset, ConstantValue)
-				ssa_block.outgoing.add(next_offset.value)
-				blocks.append(
-					(blocks_lookup[next_offset.value], evm.clone(), ssa_block, [parent_id, ] + traces)
-				)
-				ssa_block.outgoing.add(second_offset)
-				blocks.append(
-					(blocks_lookup[second_offset], evm.clone(), ssa_block, [parent_id, ] + traces)
-				)
+				if visited[(parent_id, next_offset)] < 10:
+					assert isinstance(next_offset, ConstantValue)
+					ssa_block.outgoing.add(next_offset.value)
+					blocks.append(
+						(blocks_lookup[next_offset.value], evm.clone(), ssa_block, [parent_id, ] + traces)
+					)
+					ssa_block.outgoing.add(second_offset)
+					visited[(parent_id, next_offset)] += 1
+				if visited[(parent_id, second_offset)] < 10:
+					blocks.append(
+						(blocks_lookup[second_offset], evm.clone(), ssa_block, [parent_id, ] + traces)
+					)
+					visited[(parent_id, second_offset)] += 1
 				if previous_op is None:
 					instruction=Instruction(
 						name="JUMPI",
-						arguments=ArgumentsHandler([
+						arguments=OrderedSet([
 							Arguments(
 								arguments=[
 									condition,
@@ -185,6 +194,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							opcode=opcode.name, 
 							inputs=inputs,
 							pc=opcode.pc,
+							block=block.start_offset,
 						)
 					)
 					if opcode.pc not in variable_id:
@@ -192,7 +202,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				if previous_op is None:
 					instruction=Instruction(
 						name=opcode.name,
-						arguments=ArgumentsHandler([
+						arguments=OrderedSet([
 							Arguments(
 								arguments=inputs,
 								parent_block=(hex(parent.id) if parent is not None else None),
@@ -253,6 +263,7 @@ def transpile_from_bytecode(bytecode):
 
 	result = subprocess.run(["python3", "-m", "vyper.cli.venom_main", "output/generated.venom"], capture_output=True, text=True)
 	assert result.returncode == 0, result.stderr
+	print(result.stdout)
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
