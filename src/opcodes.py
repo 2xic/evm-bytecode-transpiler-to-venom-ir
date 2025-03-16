@@ -148,7 +148,7 @@ def get_opcodes_from_bytes(bytecode):
 	outputs = []
 	instruction_pointer = 0
 	while instruction_pointer < len(bytecode):
-		opcode = opcodes[bytecode[instruction_pointer]]
+		opcode = opcodes.get(bytecode[instruction_pointer], opcodes[0xFE]) # 0xFE = Invalid
 		if "PUSH" in opcode["name"]:
 			size = opcode["opcode"] - 0x5F
 			if size == 0:
@@ -169,10 +169,6 @@ def get_opcodes_from_bytes(bytecode):
 			outputs.append(Opcode(opcode["name"], opcode["inputs"], opcode["outputs"], instruction_pointer))
 			instruction_pointer += 1
 	return outputs
-
-
-
-
 
 
 

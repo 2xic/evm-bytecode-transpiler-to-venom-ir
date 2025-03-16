@@ -1,17 +1,17 @@
 from typing import List
-from test_utils.compiler import SolcCompiler
+from test_utils.compiler import SolcCompiler, OptimizerSettings
 from opcodes import get_opcodes_from_bytes, DupOpcode, PushOpcode, SwapOpcode
-from blocks import get_basic_blocks, BasicBlock
+from blocks import get_basic_blocks, BasicBlock, END_OF_BLOCK_OPCODES
 from symbolic import EVM, ConstantValue, SymbolicOpcode
 from typing import List, Dict, Optional
 import graphviz
-from blocks import END_OF_BLOCK_OPCODES
 import argparse
 import subprocess
 from collections import defaultdict
 from ssa_structures import SsaProgram, SsaBlock, Opcode, Arguments, Block, Instruction
 from ordered_set import OrderedSet
 from cfg import save_cfg
+import tempfile
 
 def get_ssa_program(bytecode) -> SsaProgram:
 	basic_blocks = get_basic_blocks(get_opcodes_from_bytes(bytecode))
@@ -46,16 +46,21 @@ def get_ssa_program(bytecode) -> SsaProgram:
 
 		# Do the opcode execution
 		for index, opcode in enumerate(block.opcodes):
+			is_last_opcode = index == len(block.opcodes) - 1
 			previous_op = ssa_block.opcodes[index] if index < len(ssa_block.opcodes) else None
 			if isinstance(opcode, PushOpcode):
 				var = ConstantValue(
-					id=variable_counter, 
+					id=variable_id.get(opcode.pc, variable_counter), 
 					value=opcode.value(),
 					pc=opcode.pc,
 					block=block.start_offset,
 				)
 				evm.stack.append(var)
 				evm.step()
+				if opcode.pc not in variable_id:
+					variable_id[opcode.pc] = variable_counter
+					variable_counter += 1
+
 				if previous_op is None:
 					ssa_block.opcodes.append(
 						Opcode(
@@ -76,7 +81,6 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							)
 						)
 					)
-					variable_counter += 1
 			elif isinstance(opcode, DupOpcode):
 				evm.dup(opcode.index)
 				evm.step()
@@ -112,7 +116,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					ssa_block.outgoing.add(next_offset.value)
 					visited[(parent_id, next_offset)] += 1
 				if previous_op is None:
-					opcode = Opcode(
+					jmp_opcode = Opcode(
 						instruction=Instruction(
 							name="JMP",
 							arguments=OrderedSet(
@@ -127,7 +131,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							resolved_arguments=None,
 						)
 					)
-					ssa_block.opcodes.append(opcode)
+					ssa_block.opcodes.append(jmp_opcode)
 				else:
 					previous_op.instruction.arguments.append(
 						Arguments(
@@ -229,24 +233,32 @@ def get_ssa_program(bytecode) -> SsaProgram:
 						)
 					)
 				# Is fallthrough block
-				pc = opcode.pc
-				is_last_opcode = index == len(block.opcodes) - 1
-				if is_last_opcode and (pc + 1) in blocks_lookup and not opcode.name in END_OF_BLOCK_OPCODES:
-					blocks.append(
-						(blocks_lookup[pc + 1], evm.clone(), ssa_block, [parent_id, ] + traces)
-					)
-					ssa_block.outgoing.add(pc + 1)
+			# The block will just fallthrough to the next block in this case.
+			if is_last_opcode and opcode.name not in END_OF_BLOCK_OPCODES:
+				new_pc = block.start_offset + 1
+				# TODO: remove the need for the for loop.
+				while new_pc not in blocks_lookup and new_pc < max(blocks_lookup.keys()):
+					new_pc += 1
+				blocks.append(
+					(blocks_lookup[new_pc], evm.clone(), ssa_block, [parent_id, ] + traces)
+				)
+				ssa_block.outgoing.add(new_pc)
 	return SsaProgram(
 		list(converted_blocks.values())
 	)
 
-def transpile_from_single_solidity_file(filepath):
+def transpile_from_single_solidity_file(filepath, via_ir, generate_output):
+	optimization_settings = OptimizerSettings().optimize(
+		optimization_runs=2 ** 31 - 1
+	) if via_ir else OptimizerSettings()
+	optimization_settings.deduplicate = True
 	with open(filepath, "r") as file:
 		code = file.read()
-		bytecode = SolcCompiler().compile(code, via_ir=False)
-		return transpile_from_bytecode(bytecode)
+		bytecode = SolcCompiler().compile(code, settings=optimization_settings)
+		print(f"Solc: {bytecode.hex()}")
+		return transpile_from_bytecode(bytecode, generate_output)
 
-def transpile_from_bytecode(bytecode):
+def transpile_from_bytecode(bytecode, generate_output=False):
 	dot = graphviz.Digraph(comment='cfg', format='png')
 	output = get_ssa_program(bytecode)
 	output.process()
@@ -262,29 +274,44 @@ def transpile_from_bytecode(bytecode):
 		dot.node(hex(blocks.id), "".join(block), shape="box")
 		for edge in blocks.outgoing:
 			dot.edge(hex(blocks.id), hex(edge))
-	dot.render("output/ssa", cleanup=True)
-	with open("output/generated.venom", "w") as file:
-		file.write(output.convert_into_vyper_ir(strict=False))
+	
+	if generate_output:
+		dot.render("output/ssa", cleanup=True)
+		with open("output/generated.venom", "w") as file:
+			file.write(output.convert_into_vyper_ir(strict=False))
 
-	save_cfg(
-		bytecode,
-		"output/cfg.png"
-	)
+		save_cfg(
+			bytecode,
+			"output/cfg.png"
+		)
 
-	result = subprocess.run(["python3", "-m", "vyper.cli.venom_main", "output/generated.venom"], capture_output=True, text=True)
-	assert result.returncode == 0, result.stderr
-	print(result.stdout)
+	with tempfile.NamedTemporaryFile(mode="w", delete=False, prefix="/tmp/") as file:
+		file.write(
+			output.convert_into_vyper_ir(strict=False)
+		)
+		file.close()
+		result = subprocess.run(["python3", "-m", "vyper.cli.venom_main", file.name], capture_output=True, text=True)
+		assert result.returncode == 0, result.stderr
+		if not "0x" in result.stdout:
+			raise Exception(result.stdout)
+
+		return bytes.fromhex(result.stdout.strip().replace("0x",""))
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
-	group = parser.add_mutually_exclusive_group(required=True)
 
+	# input source
+	group = parser.add_mutually_exclusive_group(required=True)
 	group.add_argument('--filepath', type=str, help='Path to the file')
 	group.add_argument('--bytecode', type=str, help='Bytecode as a hex string')
+
+	# options
+	parser.add_argument("--via-ir", default=False, action='store_true')
 
 	args = parser.parse_args()
 
 	if args.filepath:
-		transpile_from_single_solidity_file(args.filepath)
+		print(transpile_from_single_solidity_file(args.filepath, args.via_ir, generate_output=True).hex())
 	elif args.bytecode:
-		transpile_from_bytecode(args.bytecode)
+		bytecode = bytes.fromhex(args.bytecode.replace("0x",""))
+		print(transpile_from_bytecode(bytecode, generate_output=True).hex())

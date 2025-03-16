@@ -1,15 +1,25 @@
 import solcx
+from dataclasses import dataclass
 
+@dataclass
+class OptimizerSettings:
+	via_ir: bool = False
+	optimizer_enabled: bool = False
+	optimization_runs: int = 200
+	deduplicate: bool = False
+
+	def optimize(self, optimization_runs = 200, via_ir=True):
+		self.via_ir = via_ir
+		self.optimization_runs = optimization_runs
+		self.optimizer_enabled = True
+		return self 
 
 class SolcCompiler:
-	def __init__(self):
-		pass
-		
-	def compile(self, file_content, via_ir=False):
-		output = self._get_solidity_output(file_content, via_ir)
+	def compile(self, file_content, settings = OptimizerSettings()) -> bytes:
+		output = self._get_solidity_output(file_content, settings)
 		return self._get_solc_bytecode(output, "main.sol")
 
-	def _get_solidity_output(self, file_content, via_ir):
+	def _get_solidity_output(self, file_content, settings: OptimizerSettings):
 		request = {
 				"language": "Solidity",
 				"sources": {
@@ -30,7 +40,16 @@ class SolcCompiler:
 					"metadata":{
 						"appendCBOR": False,
 					},
-					"viaIR": via_ir
+					"evmVersion": "paris",
+					"optimizer": {
+						"enabled": settings.optimizer_enabled,
+						"runs": settings.optimization_runs,
+						"details": {
+							# Causes a lot of phi function to be needed
+							"deduplicate": False,
+						},
+					},
+					"viaIR": settings.via_ir,
 				}
 		}   
 		return solcx.compile_standard(
@@ -46,4 +65,3 @@ class SolcCompiler:
 			if len(code) > 0:
 				return code
 		return None
-

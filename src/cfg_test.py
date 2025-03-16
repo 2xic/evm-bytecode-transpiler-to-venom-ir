@@ -13,5 +13,5 @@ def test():
 		}
     }
 	"""
-	compiled = SolcCompiler().compile(code, via_ir=False)
+	compiled = SolcCompiler().compile(code)
 	create_cfg(compiled)

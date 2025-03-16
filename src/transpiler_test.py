@@ -1,15 +1,14 @@
-from test_utils.compiler import SolcCompiler
+from test_utils.compiler import SolcCompiler, OptimizerSettings
 from transpiler import get_ssa_program
-from test_utils.compiler import SolcCompiler
 from test_utils.evm import execute_function
 from test_utils.abi import encode_function_call
+from eval import run_eval
 from symbolic import EVM
 import subprocess
 
 def execute_evm(bytecode_a, bytecode_b, function):
 	out_a = execute_function(bytecode_a, function)
 	out_b = execute_function(bytecode_b, function)
-   # #print((out_a, out_b))
 	assert out_a == \
 			out_b, f"{out_a} != {out_b} with {function.hex()}"
 	return True
@@ -99,7 +98,7 @@ def test_should_handle_loops():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code)
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
@@ -117,7 +116,7 @@ def test_should_handle_phi_djmps():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code)
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
@@ -144,7 +143,7 @@ def test_should_handle_storage():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code)
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
@@ -157,6 +156,31 @@ def test_should_handle_storage():
 	)
 
 # TODO: need to handle cycles in the CFG.
+def test_should_handle_control_flow():
+	code = """
+	contract Hello {
+		function sumUpTo() public pure returns (uint) {
+			uint sum = 0;
+			for (uint i = 1; i <= 10; i++) {
+				sum += i;
+			}
+			return sum;
+		}
+	}
+	"""
+	bytecode = SolcCompiler().compile(code, OptimizerSettings().optimize(
+		optimization_runs=2 ** 31 - 1
+	))
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("sumUpTo()"),        
+	)
+
 def skip_test_should_handle_control_flow():
 	code = """
 	contract Hello {
@@ -169,10 +193,10 @@ def skip_test_should_handle_control_flow():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code, OptimizerSettings())
 	output = get_ssa_program(bytecode)
 	output.process()
-	assert output.has_unresolved_blocks == True
+	assert output.has_unresolved_blocks == False
 	"""
 	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
 	assert execute_evm(
@@ -181,7 +205,6 @@ def skip_test_should_handle_control_flow():
 		encode_function_call("sumUpTo()"),        
 	)
 	"""
-
 def test_nested_if_conditions_explicit():
 	code = """
 	contract Hello {
@@ -193,7 +216,7 @@ def test_nested_if_conditions_explicit():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code)
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
@@ -218,7 +241,7 @@ def test_nested_if_conditions_params_explicit():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code)
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
@@ -240,7 +263,52 @@ def test_block_conditions():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("test()"),
+	)
+
+
+def skip_test_simple_mapping_no_optimizations():
+	code = """
+	contract Hello {
+		mapping(uint256 => uint256) public value;
+
+		function test() public returns (uint256) {
+			value[0] = 1;
+			return value[0];
+		}
+	}
+	"""
+	bytecode = SolcCompiler().compile(code)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("test()"),
+	)
+
+def test_simple_mapping():
+	code = """
+	contract Hello {
+		mapping(uint256 => uint256) public value;
+
+		function test() public returns (uint256) {
+			value[0] = 1;
+			return value[0];
+		}
+	}
+	"""
+	bytecode = SolcCompiler().compile(code, OptimizerSettings().optimize())
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
@@ -263,7 +331,7 @@ def test_multiple_functions():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code)
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
@@ -316,7 +384,7 @@ def test_should_handle_coin_example():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code, OptimizerSettings())
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
@@ -339,7 +407,7 @@ def test_should_handle_sstore():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(code, via_ir=False)
+	bytecode = SolcCompiler().compile(code)
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
@@ -350,6 +418,10 @@ def test_should_handle_sstore():
 			transpiled,
 			encode_function_call("setResults(address)", ["address"], ['0x' + 'ff' * 20]),
 		)
+
+# Sanity check that the eval script should still work
+def test_eval():
+	run_eval()
 
 def test_stack_evm():
 	evm = EVM(0)

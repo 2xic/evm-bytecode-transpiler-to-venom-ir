@@ -21,7 +21,6 @@ class SymbolicValue:
 class SymbolicOpcode(SymbolicValue):
 	def __init__(self, id, opcode, inputs, pc, block):
 		super().__init__(id, pc)
-		#self.id = id
 		self.opcode = opcode
 		self.inputs = inputs
 		self.pc = pc

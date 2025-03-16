@@ -6,6 +6,7 @@ from opcodes import Opcode, PushOpcode, DupOpcode, SwapOpcode
 from symbolic import EVM, ConstantValue, SymbolicOpcode
 from typing import List, Set, Dict, Optional, Any, Tuple
 from copy import deepcopy
+from ordered_set import OrderedSet
 
 END_OF_BLOCK_OPCODES = [
 	"JUMP",
@@ -105,17 +106,18 @@ def get_calling_blocks(opcodes):
 		raw_blocks.append(CallGraphBlock(
 			opcodes=i.opcodes,
 			execution_trace=[],
-			outgoing=set([]),
-			incoming=set([]),
+			outgoing=OrderedSet([]),
+			incoming=OrderedSet([]),
 		))
 		lookup_blocks[i.start_offset] = raw_blocks[-1]
 
 	blocks: List[Tuple[CallGraphBlock, EVM, Optional[CallGraphBlock]]] = [
 		(lookup_blocks[0], EVM(pc=0), None)
 	]
-	visited = set()
+	visited = OrderedSet()
 	while len(blocks) > 0:
 		(block, evm, parent_block) = blocks.pop(0)
+		evm.pc = block.start_offset
 		if len(evm.stack) > 32:
 			continue
 		if parent_block is not None:
@@ -202,15 +204,18 @@ def get_calling_blocks(opcodes):
 					setattr(current_execution_trace.opcodes[-1], "id", variable_counter)
 					variable_counter += 1
 				pc = opcode.pc
-				# The block will just fallthrough to the next block in this case.
-				if is_last_opcode and (pc + 1) in lookup_blocks and not opcode.name in END_OF_BLOCK_OPCODES:
-					blocks.append(
-						(lookup_blocks[pc + 1], evm.clone(), block)
-					)
-					block.outgoing.add(pc + 1)
-					pass
-
 				evm.step()
+			# The block will just fallthrough to the next block in this case.
+			new_pc = opcode.pc
+			if is_last_opcode and opcode.name not in END_OF_BLOCK_OPCODES:
+				# TODO: remove the need for the for loop.
+				while new_pc not in lookup_blocks and new_pc < max(lookup_blocks.keys()):
+					new_pc += 1
+				blocks.append(
+					(lookup_blocks[new_pc], evm.clone(), block)
+				)
+				block.outgoing.add(new_pc)
+
 
 	"""
 	Prune out all nodes that are not in called.
