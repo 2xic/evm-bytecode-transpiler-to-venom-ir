@@ -24,7 +24,6 @@ def get_ssa_program(bytecode) -> SsaProgram:
 	converted_blocks = {}
 	variable_counter = 0
 	variable_id = {}
-	# TODO: might need to reason more about this, but we need to make sure we have explored the program a sufficient amount of times
 	visited = defaultdict(int)
 
 	while len(blocks) > 0:
@@ -68,13 +67,13 @@ def get_ssa_program(bytecode) -> SsaProgram:
 								name="PUSH",
 								resolved_arguments=Arguments(
 									arguments=[var],
-									parent_block=parent,
+									parent_block_id=parent_id,
 									traces=traces,
 								),
 								arguments=OrderedSet([
 									Arguments(
 										arguments=[var],
-										parent_block=parent,
+										parent_block_id=parent_id,
 										traces=traces,
 									)
 								])
@@ -108,22 +107,23 @@ def get_ssa_program(bytecode) -> SsaProgram:
 			elif opcode.name == "JUMP":
 				next_offset = evm.pop_item()
 				assert isinstance(next_offset, ConstantValue)
-				if visited[(parent_id, next_offset)] < 10:
+				next_offset_value = next_offset.value
+				if visited[(parent_id, next_offset_value)] < 10:
 					visited[next_offset] += 1
 					blocks.append(
-						(blocks_lookup[next_offset.value], evm.clone(), ssa_block, [parent_id, ] + traces)
+						(blocks_lookup[next_offset_value], evm.clone(), ssa_block, [parent_id, ] + traces)
 					)
-					ssa_block.outgoing.add(next_offset.value)
-					visited[(parent_id, next_offset)] += 1
+					ssa_block.outgoing.add(next_offset_value)
+					visited[(parent_id, next_offset_value)] += 1
 				if previous_op is None:
 					jmp_opcode = Opcode(
 						instruction=Instruction(
-							name="JMP",
+							name="JUMP",
 							arguments=OrderedSet(
 								[
 									Arguments(
 										arguments=[Block(next_offset, pc=opcode.pc)],
-										parent_block=(hex(parent.id) if parent is not None else None),
+										parent_block_id=(parent.id if parent is not None else None),
 										traces=traces,
 									)
 								]
@@ -136,7 +136,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					previous_op.instruction.arguments.append(
 						Arguments(
 							arguments=[Block(next_offset, pc=opcode.pc)],
-							parent_block=(hex(parent.id) if parent is not None else None),
+							parent_block_id=(parent.id if parent is not None else None),
 							traces=traces,
 						)
 					)
@@ -144,20 +144,23 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				next_offset = evm.pop_item()
 				condition = evm.pop_item()
 				evm.step()
+				assert isinstance(next_offset, ConstantValue)
+				next_offset_value = next_offset.value
 				second_offset = opcode.pc + 1
-				if visited[(parent_id, next_offset)] < 10:
-					assert isinstance(next_offset, ConstantValue)
-					ssa_block.outgoing.add(next_offset.value)
+				if visited[(parent_id, next_offset_value)] < 10:
+					ssa_block.outgoing.add(next_offset_value)
 					blocks.append(
-						(blocks_lookup[next_offset.value], evm.clone(), ssa_block, [parent_id, ] + traces)
+						(blocks_lookup[next_offset_value], evm.clone(), ssa_block, [parent_id, ] + traces)
 					)
-					ssa_block.outgoing.add(second_offset)
-					visited[(parent_id, next_offset)] += 1
+					ssa_block.outgoing.add(next_offset_value)
+					visited[(parent_id, next_offset_value)] += 1
+				# THe false jump
 				if visited[(parent_id, second_offset)] < 10:
 					blocks.append(
 						(blocks_lookup[second_offset], evm.clone(), ssa_block, [parent_id, ] + traces)
 					)
 					visited[(parent_id, second_offset)] += 1
+					ssa_block.outgoing.add(second_offset)
 				if previous_op is None:
 					instruction=Instruction(
 						name="JUMPI",
@@ -168,7 +171,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 									Block(next_offset, pc=opcode.pc), 
 									Block(ConstantValue(None, second_offset, None, None), pc=opcode.pc)
 								],
-								parent_block=(hex(parent.id) if parent is not None else None),
+								parent_block_id=(parent.id if parent is not None else None),
 								traces=traces,
 							)
 						]),
@@ -185,7 +188,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 								Block(next_offset, pc=opcode.pc), 
 								Block(ConstantValue(None, second_offset, None, None), pc=opcode.pc)
 							],
-							parent_block=(hex(parent.id) if parent is not None else None),
+							parent_block_id=(parent.id if parent is not None else None),
 							traces=traces,
 						)
 					)
@@ -212,7 +215,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 						arguments=OrderedSet([
 							Arguments(
 								arguments=inputs,
-								parent_block=(hex(parent.id) if parent is not None else None),
+								parent_block_id=(parent.id if parent is not None else None),
 								traces=traces,
 							)
 						]),
@@ -228,7 +231,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					previous_op.instruction.arguments.append(
 						Arguments(
 							arguments=inputs,
-							parent_block=(hex(parent.id) if parent is not None else None),
+							parent_block_id=(parent.id if parent is not None else None),
 							traces=traces,
 						)
 					)
@@ -294,7 +297,7 @@ def transpile_from_bytecode(bytecode, generate_output=False):
 		assert result.returncode == 0, result.stderr
 		if not "0x" in result.stdout:
 			raise Exception(result.stdout)
-
+		print(result.stdout)
 		return bytes.fromhex(result.stdout.strip().replace("0x",""))
 
 if __name__ == "__main__":

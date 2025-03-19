@@ -6,6 +6,7 @@ from typing import List, Dict, Optional, Set, Any
 from dataclasses import dataclass
 import hashlib
 from ordered_set import OrderedSet
+from blocks import END_OF_BLOCK_OPCODES
 
 IRRELEVANT_SSA_OPCODES = ["JUMPDEST", "SWAP", "DUP", "JUMPDEST", "POP", "PUSH"]
 
@@ -46,7 +47,7 @@ class Block:
 @dataclass
 class Arguments:
 	arguments: List[Union[ConstantValue, SymbolicOpcode, Block]]
-	parent_block: str 
+	parent_block_id: Optional[int] 
 	traces: List[int]
 
 	def __str__(self):
@@ -57,10 +58,6 @@ class Arguments:
 
 	def __eq__(self, other):	
 		return hash(other) == hash(self)
-	
-	@property
-	def parent_block_id(self):
-		return int(self.parent_block.replace("0x",""), 16)
 
 @dataclass
 class Instruction:
@@ -108,11 +105,16 @@ class Opcode:
 		arguments = self.get_arguments()
 		if self.instruction.name == "JUMPI":
 			return f"jnz {arguments[0]}, {arguments[1]}, {arguments[2]}"
-		elif self.instruction.name == "JMP" and len(arguments) == 1:
+		elif self.instruction.name == "JUMP" and len(arguments) == 1:
 			return f"jmp {arguments[0]}"
-		elif self.instruction.name == "JMP" and len(arguments) > 1:
+		elif self.instruction.name == "JUMP" and len(arguments) > 1:
 			self.instruction.name = "djmp"
 			return str(self).strip()
+		elif "LOG" in self.instruction.name:
+			raw_args = arguments
+			raw_args.append(len(arguments) - 2)
+			args = ", ".join(list(map(str, arguments)))
+			return f"log {args}"
 		else:
 			return str(self).strip()
 
@@ -123,7 +125,7 @@ def find_split_index(i: Opcode):
 	
 	parents = OrderedSet()
 	for v in i.instruction.arguments:
-		parents.add(v.parent_block)
+		parents.add(v.parent_block_id)
 	
 	while True:
 		current = OrderedSet()
@@ -138,14 +140,14 @@ def find_split_index(i: Opcode):
 
 	# No shared trace, maybe we can reuse the same parent.
 	if len(parents) == 1 and found_split_point == -1:
-		return -1, int(parents[0].replace("0x",""), 16)
+		return -1, parents[0]
 
 	return found_split_point, prev
 
 def create_resolved_arguments(resolved_arguments):
 	return Arguments(
 		arguments=resolved_arguments,
-		parent_block=None,
+		parent_block_id=None,
 		traces=[],
 	)
 
@@ -157,6 +159,7 @@ class PhiEdge:
 	value: str 
 
 	def __str__(self):
+		assert self.block is not None
 		return f"{self.block}, {self.value}"
 
 @dataclass
@@ -183,15 +186,21 @@ def has_preceding_instr(block: 'SsaBlock', new_var):
 			return True
 	return False
 
+
+def resolve_variable_conflicts():
+	seed_block = 0xbd
+
+
+
+
 def resolve_phi_functions(
 		entries: List[Arguments], 
 		argument: int,
-		blocks: Dict[str, 'SsaBlock'], 
+		blocks: Dict[int, 'SsaBlock'], 
 		parent_block: Callable[[Arguments], int],
 		block: 'SsaBlock',
 	):
 	phi_function = PhiFunction(edge=OrderedSet())
-	values = OrderedSet([])
 	for args in entries:
 		var_value = args.arguments[argument]
 		if isinstance(var_value, Block):
@@ -201,23 +210,17 @@ def resolve_phi_functions(
 			new_var = f"{var_name} = {var_value}"
 			if not has_preceding_instr(blocks[block_id], new_var):
 				blocks[block_id].preceding_opcodes.append(
-					Opcode(
-						Instruction(
-							name=new_var,
-							arguments=OrderedSet([]),
-							resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
-						),
-						variable_id=-1,
+					create_opcode(
+						new_var
 					)
 				)
-			block_id = hex(block_id) if type(block_id) == int else block_id
+			block_id = hex(block_id)
 			phi_function.add_edge(
 				PhiEdge(
 					f"@block_{block_id}",
 					var_name	
 				)
 			)
-			values.add(var_name)
 		elif isinstance(var_value, ConstantValue):
 			val_id = var_value.id
 			var_name = f"%{val_id}"
@@ -225,8 +228,13 @@ def resolve_phi_functions(
 			This block id, might not be the correct one.
 			"""
 			if var_value.block == block.id:
-				# THis can't be a phi function
-				values.append(mapper(var_value))
+				phi_function.add_edge(
+					PhiEdge(
+						# This can't be a phi function
+						None,
+						mapper(var_value)	
+					)
+				)
 			else:
 				block_id = var_value.block
 				# TODO: there should be a better way of solving this
@@ -238,63 +246,85 @@ def resolve_phi_functions(
 				new_var = f"{var_name} = {var_value.value}"
 				if not has_preceding_instr(blocks[block_id], new_var):
 					blocks[block_id].preceding_opcodes.append(
-						Opcode(
-							Instruction(
-								name=(f"{var_name} = {var_value.value}"),
-								arguments=OrderedSet([]),
-								resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
-							),
-							variable_id=-1,
+						create_opcode(
+							f"{var_name} = {var_value.value}"
 						)
 					)
-				block_id = hex(block_id) if type(block_id) == int else block_id
+				block_id = hex(block_id)
 				phi_function.add_edge(
 					PhiEdge(
 						f"@block_{block_id}",
 						var_name	
 					)
 				)
-				values.add(var_name)
 		else:			
 			value = mapper(var_value)
-			parent_id = args.parent_block
+			block_id = args.parent_block_id
 			if isinstance(var_value, SymbolicOpcode):
-				parent_id = hex(var_value.block)
-				if var_value.block not in block.incoming and block.id in args.traces:
-					parent_id = hex(args.traces[
-						args.traces.index(block.id) + 1
-					])
-			# TODO: this is a temp hack that needs to be fixed
-			#		We need to better track the path of a variable from origin to destination.
-			if parent_id == "0x57" and 0xa2 in block.incoming:
-				parent_id = "0xa2"
+				block_id = var_value.block
+
+			"""
+			TODO: redo this as this also isn't an optimal algorithm.
+			"""
+			queue = [
+				(block_id, blocks[block_id].outgoing)
+			]
+			while len(queue) > 0:
+				(item, parents) = queue.pop(0)
+				if item in block.incoming:
+					block_id = item
+					break
+				for item in parents:
+					queue.append((
+						item,
+						blocks[item].outgoing
+					))
 
 			phi_function.add_edge(
 				PhiEdge(
-					f"@block_{parent_id}",
+					f"@block_{hex(block_id)}",
 					value	
 				)
 			)
-			values.add(value)
-	return values, phi_function
+
+	
+	if False and not phi_function.can_skip and len(block.incoming) > 1:
+		print(list(map(hex, (block.incoming))), hex(block.id))
+		for i in block.incoming:
+			for j in phi_function.edge:
+				if hex(i) in j.block:
+					break
+			else:
+				new_var = "%dummy = 1"
+				if not has_preceding_instr(blocks[block_id], new_var):
+					blocks[i].preceding_opcodes.append(
+						create_opcode(
+							new_var
+						)
+					)
+				phi_function.add_edge(
+					PhiEdge(
+						f"@block_{hex(i)}",
+						"%dummy"
+					)
+				)
+
+
+	return phi_function
 
 def handle_resolve_arguments(i: Opcode, blocks: Dict[str, 'SsaBlock'], phi_counter: 'PhiCounter', block: 'SsaBlock', parent_block):
 	instruction_args = i.instruction.arguments
 	resolved_arguments = []
 	for argument in range((i.instruction.arg_count)):
-		values, phi_functions = resolve_phi_functions(
+		phi_functions = resolve_phi_functions(
 			instruction_args,
 			argument,
 			blocks,
 			parent_block=parent_block,
 			block=block,
 		)
-		# TODO: There is a bug / error in the implementation with the resolver function where 
-		#		It will sometimes incorrectly generate phi functions when not relevant
-		#		when this is fixed you can remove the additional checks here.
-		if len(values) == 1:
-			resolved_arguments.append(values.pop())
-		elif phi_functions.can_skip and len(values) == 0:
+
+		if phi_functions.can_skip:
 			resolved_arguments.append(phi_functions.edge[0].value)
 		else:
 			# TODO: should just reassign to same variable
@@ -313,7 +343,7 @@ def handle_resolve_arguments(i: Opcode, blocks: Dict[str, 'SsaBlock'], phi_count
 				)
 				resolved_arguments.append(f"%phi{phi_value}")
 
-			if i.instruction.name == "JMP":
+			if i.instruction.name == "JUMP":
 				resolved_arguments += [
 					f"@block_{hex(v.arguments[argument].id.value)}"
 					for v in instruction_args	
@@ -326,7 +356,7 @@ def create_opcode(name: str):
 			Instruction(
 				name=name,
 				arguments=OrderedSet([]),
-				resolved_arguments=Arguments(arguments=[], parent_block="", traces=[])
+				resolved_arguments=Arguments(arguments=[], parent_block_id=None, traces=[])
 			),
 			variable_id=-1,
 		)
@@ -339,9 +369,9 @@ def construct_phi_function(phi_function_operands: PhiFunction, phi_functions_cou
 def check_unique_parents(i: Opcode):
 	seen_parents = OrderedSet()
 	for entry in i.instruction.arguments:
-		if entry.parent_block in seen_parents:
+		if entry.parent_block_id in seen_parents:
 			return False
-		seen_parents.add(entry.parent_block)
+		seen_parents.add(entry.parent_block_id)
 	return True
 
 @dataclass
@@ -355,7 +385,7 @@ class PhiCounter:
 
 @dataclass
 class SsaBlock:
-	id: str
+	id: int
 	preceding_opcodes: List[Opcode]
 	opcodes: List[Opcode]
 	incoming: OrderedSet[str]
@@ -365,37 +395,38 @@ class SsaBlock:
 		for i in list(self.opcodes):
 			if i.instruction.name in IRRELEVANT_SSA_OPCODES:
 				self.opcodes.remove(i)
-		if len(self.opcodes) == 0 and len(self.outgoing) > 0:
-			print(self.outgoing)
-			assert len(self.outgoing) == 1
+		if len(self.outgoing) > 0 and not self.is_terminating:
+			assert len(self.outgoing) == 1, len(self.outgoing)
 			self.opcodes.append(
 				Opcode(
 					Instruction(
-						name=f"jmp",
+						name=f"JUMP",
 						arguments=OrderedSet([]),
 						resolved_arguments=Arguments(arguments=[
 							Block(ConstantValue(-1, self.outgoing[0], -1, -1), -1)
-						], parent_block="", traces=[])
+						], parent_block_id=None, traces=[])
 					),
 					variable_id=None,
 				)
 			)
+			
 		return self
+	
+	@property
+	def is_terminating(self):
+		if len(self.opcodes) == 0:
+			return False
+		return self.opcodes[-1].instruction.name in END_OF_BLOCK_OPCODES
 	
 	def resolve_arguments(self, blocks: Dict[str, 'SsaBlock'], phi_counter: PhiCounter):
 		for i in list(self.opcodes):
 			if i.variable_id is not None:
 				i.instruction.name = f"%{i.variable_id} = {i.instruction.name}"
-				#if i.variable_id == 29:
-				#print(i.instruction.arguments)
-				#for qq in (i.instruction.arguments):
-				#	print(qq)
-				#print(len(i.instruction.arguments))
 			# Simplest case, there has only been seen one variable used
 			if len(i.instruction.arguments) == 1:
 				i.instruction.resolved_arguments = Arguments(
 					arguments=list(map(mapper, i.instruction.arguments[0].arguments)),
-					parent_block=None,
+					parent_block_id=None,
 					traces=[],
 				)
 			# We have seen multiple variables used
@@ -413,7 +444,7 @@ class SsaBlock:
 					i.instruction.resolved_arguments = create_resolved_arguments(
 						resolved_arguments
 					)
-				elif i.instruction.name == "JMP":
+				elif i.instruction.name == "JUMP":
 					found_split_point, prev = find_split_index(i)
 					if prev is not None:
 						block = blocks[prev]
@@ -427,7 +458,7 @@ class SsaBlock:
 						i.instruction.resolved_arguments = create_resolved_arguments(resolved_arguments)
 				else:
 					found_split_point, prev = find_split_index(i)
-					if prev is not None:# and found_split_point != -1:
+					if prev is not None:
 						block = blocks[prev]
 						resolved_arguments = handle_resolve_arguments(
 							i,
@@ -445,7 +476,7 @@ class SsaBlock:
 		for opcode in list(self.opcodes):
 			if opcode.is_unresolved:
 				unresolved.append(str(opcode))
-				unresolved.append("".join(map(str, ["\t" + str(list(map(lambda x: [str(x), x.parent_block], opcode.instruction.arguments))), list(map(lambda x: hash(x), opcode.instruction.arguments))])))
+				unresolved.append("".join(map(str, ["\t" + str(list(map(lambda x: [str(x), hex(x.parent_block_id)], opcode.instruction.arguments))), list(map(lambda x: hash(x), opcode.instruction.arguments))])))
 				for arg in opcode.instruction.arguments:
 					unresolved.append(f"\t{arg}")
 		return unresolved
@@ -467,7 +498,7 @@ class SsaProgram:
 
 	def process(self):		
 		lookup = {
-			v.id:v for v in self.blocks
+			block.id:block for block in self.blocks
 		}
 		for block in self.blocks:
 			block.remove_irrelevant_opcodes()

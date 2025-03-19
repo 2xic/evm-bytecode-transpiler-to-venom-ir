@@ -5,7 +5,7 @@ Input is EVM bytecode and output is Venom IR.
 ## Setup
 ```bash
 git clone https://github.com/vyperlang/vyper
-
+git checkout 579dd5714145b15c772c8eb4066ade34a94ddef1
 pip3 install -e .
 
 python3 -m vyper.cli.venom_main

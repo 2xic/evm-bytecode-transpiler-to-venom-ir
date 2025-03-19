@@ -1,10 +1,11 @@
 from test_utils.compiler import SolcCompiler, OptimizerSettings
-from transpiler import get_ssa_program
+from transpiler import get_ssa_program, transpile_from_bytecode
 from test_utils.evm import execute_function
 from test_utils.abi import encode_function_call
 from eval import run_eval
 from symbolic import EVM
 import subprocess
+from bytecodes import MULTICALL, MINIMAL_PROXY, MINIMAL_PROXY_2, REGISTRY, ERC4626_RRATE_PROVIDER, ERC721_DROP
 
 def execute_evm(bytecode_a, bytecode_b, function):
 	out_a = execute_function(bytecode_a, function)
@@ -62,7 +63,6 @@ def test_simple_multiple_functions():
 		transpiled,
 		encode_function_call("bagel()"),        
 	)
-	# TODO: Figure out what the issue is.
 	assert execute_evm(
 		output,
 		transpiled,
@@ -103,6 +103,13 @@ def test_should_handle_loops():
 	output.process()
 	assert output.has_unresolved_blocks == False
 	# TODO: add compilation check here also.	
+	if False:
+		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+		assert execute_evm(
+			bytecode,
+			transpiled,
+			encode_function_call("test()"),        
+		)
 
 def test_should_handle_phi_djmps():
 	code = """
@@ -132,6 +139,31 @@ def test_should_handle_phi_djmps():
 		encode_function_call("test2()"),        
 	)
 
+def skip_test_balance_calls():
+	code = """
+		contract BalanceCallS {
+			function getEthBalances(
+				address[] memory addr
+			) public view returns (uint256[] memory balance) {
+				balance = new uint256[](addr.length);
+				for (uint256 i = 0; i < addr.length; i++) {
+					balance[i] = getEthBalance(addr[i]);
+				}
+				return balance;
+			}
+
+			function getEthBalance(address addr) public view returns (uint256 balance) {
+				balance = addr.balance;
+			}
+		}
+	"""
+	bytecode = SolcCompiler().compile(code)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks == False
+	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	assert transpiled is not None
+
 def test_should_handle_storage():
 	code = """
 	contract Hello {
@@ -155,7 +187,6 @@ def test_should_handle_storage():
 		encode_function_call("set()"),        
 	)
 
-# TODO: need to handle cycles in the CFG.
 def test_should_handle_control_flow():
 	code = """
 	contract Hello {
@@ -204,7 +235,8 @@ def skip_test_should_handle_control_flow():
 		transpiled,
 		encode_function_call("sumUpTo()"),        
 	)
-	"""
+	"""	
+
 def test_nested_if_conditions_explicit():
 	code = """
 	contract Hello {
@@ -418,6 +450,36 @@ def test_should_handle_sstore():
 			transpiled,
 			encode_function_call("setResults(address)", ["address"], ['0x' + 'ff' * 20]),
 		)
+
+def test_transpile_multicall_from_bytecode():
+	# Should at least compile
+	output = get_ssa_program(MULTICALL)
+	output.process()
+	assert output.has_unresolved_blocks == True
+
+def test_transpile_minimal_proxy_from_bytecode():
+	for i in [
+		MINIMAL_PROXY, 
+		MINIMAL_PROXY_2
+	]:
+		output = get_ssa_program(i)
+		output.process()
+		assert output.has_unresolved_blocks == False
+		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+		assert transpiled is not None
+
+def test_raw_bytecode():
+	for i in [
+		REGISTRY,
+		ERC4626_RRATE_PROVIDER,
+		ERC721_DROP,
+		
+	]:
+		output = get_ssa_program(i)
+		output.process()
+		assert output.has_unresolved_blocks == False
+		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+		assert transpiled is not None
 
 # Sanity check that the eval script should still work
 def test_eval():

@@ -7,6 +7,7 @@ from symbolic import EVM, ConstantValue, SymbolicOpcode
 from typing import List, Set, Dict, Optional, Any, Tuple
 from copy import deepcopy
 from ordered_set import OrderedSet
+from collections import defaultdict
 
 END_OF_BLOCK_OPCODES = [
 	"JUMP",
@@ -14,6 +15,7 @@ END_OF_BLOCK_OPCODES = [
 	"STOP",
 	"REVERT",
 	"RETURN",
+	"INVALID",
 ]
 START_OF_BLOCK_OPCODES = [
 	"JUMPDEST"
@@ -114,7 +116,7 @@ def get_calling_blocks(opcodes):
 	blocks: List[Tuple[CallGraphBlock, EVM, Optional[CallGraphBlock]]] = [
 		(lookup_blocks[0], EVM(pc=0), None)
 	]
-	visited = OrderedSet()
+	visited = defaultdict(int)
 	while len(blocks) > 0:
 		(block, evm, parent_block) = blocks.pop(0)
 		evm.pc = block.start_offset
@@ -129,6 +131,7 @@ def get_calling_blocks(opcodes):
 			opcodes=[]
 		)
 		block.execution_trace.append(current_execution_trace)
+		parent_id = parent_block.start_offset if parent_block is not None else None
 		for index, opcode in enumerate(block.opcodes):
 			is_last_opcode = index == len(block.opcodes) - 1
 			current_execution_trace.executions.append(Trace(
@@ -153,38 +156,38 @@ def get_calling_blocks(opcodes):
 				evm.step()
 			elif opcode.name == "JUMP":
 				next_offset = evm.pop_item()
-				if next_offset not in visited:
-					if isinstance(next_offset, ConstantValue):
-						block.outgoing.add(next_offset.value)
-						blocks.append(
-							(lookup_blocks[next_offset.value], evm.clone(), block)
-						)
-					else:
-						print(f"Cant resolve JUMP {next_offset}")
+				assert isinstance(next_offset, ConstantValue), f"pc: {hex(opcode.pc)}"
+				next_offset_value = next_offset.value
+				block.outgoing.add(next_offset_value)
+				if visited[(parent_id, next_offset_value)] < 10:
+					blocks.append(
+						(lookup_blocks[next_offset_value], evm.clone(), block)
+					)
+					visited[(parent_id, next_offset_value)] += 1
 					evm.step()
-					visited.add(next_offset)
 			elif opcode.name == "JUMPI":
 				next_offset = evm.pop_item()
-				if next_offset not in visited:
-					evm.pop_item()
-					evm.step()
-					if isinstance(next_offset, ConstantValue):
-						block.outgoing.add(next_offset.value)
-						blocks.append(
-							(lookup_blocks[next_offset.value], evm.clone(), block)
-						)
-					else:
-						print(f"Cant resolve JUMPI {next_offset}")
-					visited.add(next_offset)
+				condition = evm.pop_item()
+				evm.step()
+				assert condition is not None
+				assert isinstance(next_offset, ConstantValue)
+				next_offset_value = next_offset.value
+			#	evm.step()
+				block.outgoing.add(next_offset_value)
+				if visited[(parent_id, next_offset_value)] < 10:
+					blocks.append(
+						(lookup_blocks[next_offset_value], evm.clone(), block)
+					)
+					visited[(parent_id, next_offset_value)] += 1
 
 				pc = opcode.pc + 1
 				assert pc in lookup_blocks
-				if pc not in visited:
-					block.outgoing.add(pc)
+				block.outgoing.add(pc)
+				if visited[(parent_id, pc)] < 10:
 					blocks.append(
 						(lookup_blocks[pc], evm.clone(), block)
 					)
-					visited.add(pc)
+					visited[(parent_id, pc)] += 1
 			else:
 				inputs = []
 				for i in range(opcode.inputs):
@@ -207,7 +210,7 @@ def get_calling_blocks(opcodes):
 				evm.step()
 			# The block will just fallthrough to the next block in this case.
 			new_pc = opcode.pc
-			if is_last_opcode and opcode.name not in END_OF_BLOCK_OPCODES:
+			if is_last_opcode and opcode.name not in END_OF_BLOCK_OPCODES and visited[(parent_id, new_pc)] < 10:
 				# TODO: remove the need for the for loop.
 				while new_pc not in lookup_blocks and new_pc < max(lookup_blocks.keys()):
 					new_pc += 1
@@ -215,6 +218,7 @@ def get_calling_blocks(opcodes):
 					(lookup_blocks[new_pc], evm.clone(), block)
 				)
 				block.outgoing.add(new_pc)
+				visited[(parent_id, new_pc)] += 1
 
 
 	"""

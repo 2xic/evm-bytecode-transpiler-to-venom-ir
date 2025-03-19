@@ -1,7 +1,8 @@
-from test_utils.compiler import SolcCompiler
+from test_utils.compiler import SolcCompiler, OptimizerSettings
 from opcodes import get_opcodes_from_bytes
 from blocks import get_calling_blocks
 import graphviz
+import argparse
 
 def create_cfg(bytecode):
 	cfg = get_calling_blocks(get_opcodes_from_bytes(bytecode))
@@ -24,17 +25,34 @@ def save_cfg(bytecode, name="cfg.png", render=False):
 
 	dot.render(name.replace(".png",""), cleanup=True)
 
-if __name__ == "__main__":
-	code = """
-    contract Hello {
-        function test() public returns (uint256) {
-            return bagel();
-        }
+def cfg_from_single_solidity_file(filepath, via_ir):
+	optimization_settings = OptimizerSettings().optimize(
+		optimization_runs=2 ** 31 - 1
+	) if via_ir else OptimizerSettings()
+	optimization_settings.deduplicate = True
+	with open(filepath, "r") as file:
+		code = file.read()
+		bytecode = SolcCompiler().compile(code, settings=optimization_settings)
+		return cfg_from_bytecode(bytecode)
 
-        function bagel() public returns (uint256) {
-            return 1;
-        }
-    }
-	"""
-	print(SolcCompiler().compile(code, via_ir=False).hex())
-	save_cfg(SolcCompiler().compile(code, via_ir=False))
+def cfg_from_bytecode(bytecode):
+	save_cfg(bytecode)
+
+if __name__ == "__main__":
+	parser = argparse.ArgumentParser()
+
+	# input source
+	group = parser.add_mutually_exclusive_group(required=True)
+	group.add_argument('--filepath', type=str, help='Path to the file')
+	group.add_argument('--bytecode', type=str, help='Bytecode as a hex string')
+
+	# options
+	parser.add_argument("--via-ir", default=False, action='store_true')
+
+	args = parser.parse_args()
+
+	if args.filepath:
+		cfg_from_single_solidity_file(args.filepath, args.via_ir)
+	elif args.bytecode:
+		bytecode = bytes.fromhex(args.bytecode.replace("0x",""))
+		cfg_from_bytecode(bytecode)

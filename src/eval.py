@@ -50,11 +50,11 @@ def run_eval():
 		venom_bytecode_optimized_input = transpile_from_bytecode(SolcCompiler().compile(
 			i.contract,
 			OptimizerSettings().optimize(optimization_runs=optimization_runs, via_ir=False)
-		)) if False else bytes()
+		))
 		venom_bytecode_optimized_input_via_ir = transpile_from_bytecode(SolcCompiler().compile(
 			i.contract,
 			OptimizerSettings().optimize(optimization_runs=optimization_runs)
-		)) if False else bytes()
+		))
 		solc_bytecode_optimized = SolcCompiler().compile(
 			i.contract,
 			OptimizerSettings().optimize(optimization_runs=optimization_runs, via_ir=False)
