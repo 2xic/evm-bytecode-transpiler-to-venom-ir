@@ -1,18 +1,31 @@
-# bytecode venom transpiler
+# bytecode venom transpiler (work in progress)
+**Currently limited support, but shows early signs of life**
 
-Input is EVM bytecode and output is Venom IR.
+Input raw EVM bytecode and get Venom IR out. 
 
-## Setup
-```bash
-git clone https://github.com/vyperlang/vyper
-git checkout 579dd5714145b15c772c8eb4066ade34a94ddef1
-pip3 install -e .
+## Motivation
+I was working on my own compiler alternative to Solidity during the autumn of 2024, but didn't have time to fully prioritize it and then lost some interest in it. During Christmas Holidays I saw this tweet from one of the [Vyper and Venom developers](https://x.com/harkal/status/1870054989990666584) where he teased something like this, but it never got spoken about again and so I got curious to implement it myself.
 
-python3 -m vyper.cli.venom_main
-```
+## Known issues
+- The placement of phi functions is not fully implemented and also not fully working. There is some basic support.
+- There will be edges cases in case of `CODECOPY` which we don't correctly cover. Or more generally, we don't model model memory or storage atm which could cause incorrect transpiled code.
 
 ## Example
-*todo*
+First install what you need to run this
+```bash
+pip3 install -r requirments.txt
+```
+
+```bash
+> python3 src/transpiler.py --bytecode 6080604052600436101561001257600080fd5b60003560e01c63c0734b111461002757600080fd5b3461010d5760007ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc36011261010857600160005b600a82111561006f57602090604051908152f35b8181018091116100d957907fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff81146100aa576001019061005b565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b600080fd5b600080fd
+
+608060405236600310610010575f5ffd5b5f3560e01c63c0734b1114610023575f5ffd5b3461010857367ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc015f136101045760015f905b80600b1161006a5750604051908152602090f35b80820191829011156100a55750507f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b80196100da5750507f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff50600101610056565b5f5ffd5b5f5ffd
+```
+
+That will also generate the plot of the Venom IR that was used to transpile the bytecode.
+
+![venom ir graph](./readme/ssa.png)
+
 
 ## Looking at the ir
 ```bash
@@ -22,9 +35,7 @@ python3 -m vyper.cli.venom_main
 ./generator compile [venom file]
 ```
 
-## Info
-- https://en.wikipedia.org/wiki/Static_single-assignment_form
-- https://x.com/harkal/status/1870054989990666584
-- https://www.trailofbits.com/documents/RattleRecon.pdf
-- https://github.com/vyperlang/vyper/blob/master/vyper/venom/README.md
-- https://github.com/vyperlang/vyper/discussions/4513
+## Resources
+- [Wikipedia article on SSA](https://en.wikipedia.org/wiki/Static_single-assignment_form)
+- [Venom IR readme](https://github.com/vyperlang/vyper/blob/master/vyper/venom/README.md)
+- [Presetnation on Rattle](https://www.trailofbits.com/documents/RattleRecon.pdf) which converts bytecode into SSA form. Some ideas are applicable here. It's built on top of this [paper](https://c9x.me/compile/bib/braun13cc.pdf) which I should take more ideas from.

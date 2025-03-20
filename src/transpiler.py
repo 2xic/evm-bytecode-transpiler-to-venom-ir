@@ -2,16 +2,33 @@ from typing import List
 from test_utils.compiler import SolcCompiler, OptimizerSettings
 from opcodes import get_opcodes_from_bytes, DupOpcode, PushOpcode, SwapOpcode
 from blocks import get_basic_blocks, BasicBlock, END_OF_BLOCK_OPCODES
-from symbolic import EVM, ConstantValue, SymbolicOpcode
+from symbolic import EVM, ConstantValue, SymbolicOpcode, SymbolicPcOpcode, SymbolicAndOpcode
 from typing import List, Dict, Optional
 import graphviz
 import argparse
 import subprocess
 from collections import defaultdict
-from ssa_structures import SsaProgram, SsaBlock, Opcode, Arguments, Block, Instruction
+from ssa_structures import SsaProgram, SsaBlock, Opcode, Arguments, Block, Instruction, create_opcode
 from ordered_set import OrderedSet
-from cfg import save_cfg
 import tempfile
+from vyper.cli.venom_main import _parse_args
+
+
+from vyper.compiler.phases import generate_bytecode
+from vyper.compiler.settings import OptimizationLevel, Settings, set_global_settings
+from vyper.venom import generate_assembly_experimental, run_passes_on
+from vyper.venom.check_venom import check_venom_ctx
+from vyper.venom.parser import parse_venom
+
+def compile_venom(venom_source):
+	ctx = parse_venom(venom_source)
+
+	check_venom_ctx(ctx)
+
+	run_passes_on(ctx, OptimizationLevel.default())
+	asm = generate_assembly_experimental(ctx)
+	bytecode = generate_bytecode(asm, compiler_metadata=None)
+	return bytecode
 
 def get_ssa_program(bytecode) -> SsaProgram:
 	basic_blocks = get_basic_blocks(get_opcodes_from_bytes(bytecode))
@@ -105,8 +122,8 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					)
 				)
 			elif opcode.name == "JUMP":
-				next_offset = evm.pop_item()
-				assert isinstance(next_offset, ConstantValue)
+				next_offset = evm.pop_item().constant_fold()
+				assert isinstance(next_offset, ConstantValue), next_offset
 				next_offset_value = next_offset.value
 				if visited[(parent_id, next_offset_value)] < 10:
 					visited[next_offset] += 1
@@ -144,18 +161,30 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				next_offset = evm.pop_item()
 				condition = evm.pop_item()
 				evm.step()
-				assert isinstance(next_offset, ConstantValue)
+				next_offset = next_offset.constant_fold()
+				assert isinstance(next_offset, ConstantValue), next_offset
 				next_offset_value = next_offset.value
 				second_offset = opcode.pc + 1
-				if visited[(parent_id, next_offset_value)] < 10:
+				if visited[(parent_id, next_offset_value)] < 10 and next_offset_value in blocks_lookup:
 					ssa_block.outgoing.add(next_offset_value)
 					blocks.append(
 						(blocks_lookup[next_offset_value], evm.clone(), ssa_block, [parent_id, ] + traces)
 					)
 					ssa_block.outgoing.add(next_offset_value)
 					visited[(parent_id, next_offset_value)] += 1
+				elif not next_offset_value in blocks_lookup:
+					converted_blocks[next_offset_value] = SsaBlock(
+						id=next_offset_value,
+						preceding_opcodes=[],
+						opcodes=[
+							create_opcode("revert 0, 0")
+						],
+						incoming=OrderedSet([]),
+						outgoing=OrderedSet([]),
+					)
+
 				# THe false jump
-				if visited[(parent_id, second_offset)] < 10:
+				if visited[(parent_id, second_offset)] < 10 and second_offset:
 					blocks.append(
 						(blocks_lookup[second_offset], evm.clone(), ssa_block, [parent_id, ] + traces)
 					)
@@ -198,8 +227,16 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					inputs.append(evm.stack.pop())
 				assert opcode.outputs <= 1, f"Value {opcode.outputs}"
 				if opcode.outputs > 0:
+					opcodes = {
+						"PC": SymbolicPcOpcode,
+						"AND": SymbolicAndOpcode,
+					}
+					opcode_constructor = opcodes.get(
+						opcode.name.upper(),
+						SymbolicOpcode
+					)
 					evm.stack.append(
-						SymbolicOpcode(
+						opcode_constructor(
 							id=variable_id.get(opcode.pc, variable_counter),
 							opcode=opcode.name, 
 							inputs=inputs,
@@ -242,10 +279,11 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				# TODO: remove the need for the for loop.
 				while new_pc not in blocks_lookup and new_pc < max(blocks_lookup.keys()):
 					new_pc += 1
-				blocks.append(
-					(blocks_lookup[new_pc], evm.clone(), ssa_block, [parent_id, ] + traces)
-				)
-				ssa_block.outgoing.add(new_pc)
+				if new_pc in blocks_lookup:
+					blocks.append(
+						(blocks_lookup[new_pc], evm.clone(), ssa_block, [parent_id, ] + traces)
+					)
+					ssa_block.outgoing.add(new_pc)
 	return SsaProgram(
 		list(converted_blocks.values())
 	)
@@ -283,22 +321,7 @@ def transpile_from_bytecode(bytecode, generate_output=False):
 		with open("output/generated.venom", "w") as file:
 			file.write(output.convert_into_vyper_ir(strict=False))
 
-		save_cfg(
-			bytecode,
-			"output/cfg.png"
-		)
-
-	with tempfile.NamedTemporaryFile(mode="w", delete=False, prefix="/tmp/") as file:
-		file.write(
-			output.convert_into_vyper_ir(strict=False)
-		)
-		file.close()
-		result = subprocess.run(["python3", "-m", "vyper.cli.venom_main", file.name], capture_output=True, text=True)
-		assert result.returncode == 0, result.stderr
-		if not "0x" in result.stdout:
-			raise Exception(result.stdout)
-		print(result.stdout)
-		return bytes.fromhex(result.stdout.strip().replace("0x",""))
+	return compile_venom(output.convert_into_vyper_ir(strict=False))
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser()

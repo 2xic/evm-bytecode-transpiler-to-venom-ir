@@ -3,3 +3,7 @@ debug.venom
 *.vy
 *.sol
 output
+.cache
+
+# Eval for https://huggingface.co/datasets/Zellic/smart-contract-fiesta
+fiesta.py

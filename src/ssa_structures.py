@@ -129,13 +129,17 @@ def find_split_index(i: Opcode):
 	
 	while True:
 		current = OrderedSet()
-		for v in i.instruction.arguments:
-			if index < len(v.traces):
-				current.add(v.traces[index])
+		for arg_trace in i.instruction.arguments:
+			if index < len(arg_trace.traces):
+				current.add(arg_trace.traces[index])
 		if len(current) == len(i.instruction.arguments):
 			found_split_point = index - 1
 			break
 		index += 1
+		if len(current) == 0:
+			prev = None
+			found_split_point = -1
+			break
 		prev = current[0]
 
 	# No shared trace, maybe we can reuse the same parent.
@@ -160,7 +164,8 @@ class PhiEdge:
 
 	def __str__(self):
 		assert self.block is not None
-		return f"{self.block}, {self.value}"
+		block = f"@block_{hex(self.block)}" if self.block > 0 else "@global"
+		return f"{block}, {self.value}"
 
 @dataclass
 class PhiFunction:
@@ -187,12 +192,6 @@ def has_preceding_instr(block: 'SsaBlock', new_var):
 	return False
 
 
-def resolve_variable_conflicts():
-	seed_block = 0xbd
-
-
-
-
 def resolve_phi_functions(
 		entries: List[Arguments], 
 		argument: int,
@@ -214,10 +213,9 @@ def resolve_phi_functions(
 						new_var
 					)
 				)
-			block_id = hex(block_id)
 			phi_function.add_edge(
 				PhiEdge(
-					f"@block_{block_id}",
+					block_id,
 					var_name	
 				)
 			)
@@ -250,10 +248,9 @@ def resolve_phi_functions(
 							f"{var_name} = {var_value.value}"
 						)
 					)
-				block_id = hex(block_id)
 				phi_function.add_edge(
 					PhiEdge(
-						f"@block_{block_id}",
+						block_id,
 						var_name	
 					)
 				)
@@ -264,12 +261,13 @@ def resolve_phi_functions(
 				block_id = var_value.block
 
 			"""
-			TODO: redo this as this also isn't an optimal algorithm.
+			TODO: redo this as this also isn't an optimal / correct algorithm.
 			"""
 			queue = [
 				(block_id, blocks[block_id].outgoing)
 			]
-			while len(queue) > 0:
+			counter = 0
+			while len(queue) > 0 and counter < 1_000:
 				(item, parents) = queue.pop(0)
 				if item in block.incoming:
 					block_id = item
@@ -279,36 +277,14 @@ def resolve_phi_functions(
 						item,
 						blocks[item].outgoing
 					))
-
+				counter += 1
+			assert counter < 1_000, "Failed to resolve"
 			phi_function.add_edge(
 				PhiEdge(
-					f"@block_{hex(block_id)}",
+					block_id,
 					value	
 				)
 			)
-
-	
-	if False and not phi_function.can_skip and len(block.incoming) > 1:
-		print(list(map(hex, (block.incoming))), hex(block.id))
-		for i in block.incoming:
-			for j in phi_function.edge:
-				if hex(i) in j.block:
-					break
-			else:
-				new_var = "%dummy = 1"
-				if not has_preceding_instr(blocks[block_id], new_var):
-					blocks[i].preceding_opcodes.append(
-						create_opcode(
-							new_var
-						)
-					)
-				phi_function.add_edge(
-					PhiEdge(
-						f"@block_{hex(i)}",
-						"%dummy"
-					)
-				)
-
 
 	return phi_function
 
@@ -358,7 +334,7 @@ def create_opcode(name: str):
 				arguments=OrderedSet([]),
 				resolved_arguments=Arguments(arguments=[], parent_block_id=None, traces=[])
 			),
-			variable_id=-1,
+			variable_id=None,
 		)
 	)	
 
@@ -397,18 +373,30 @@ class SsaBlock:
 				self.opcodes.remove(i)
 		if len(self.outgoing) > 0 and not self.is_terminating:
 			assert len(self.outgoing) == 1, len(self.outgoing)
+			next_block = self.outgoing[0]
 			self.opcodes.append(
 				Opcode(
 					Instruction(
 						name=f"JUMP",
 						arguments=OrderedSet([]),
 						resolved_arguments=Arguments(arguments=[
-							Block(ConstantValue(-1, self.outgoing[0], -1, -1), -1)
+							Block(ConstantValue(-1, next_block, -1, -1), -1)
 						], parent_block_id=None, traces=[])
 					),
 					variable_id=None,
 				)
 			)
+		elif not self.is_terminating:
+			self.opcodes.append(
+				Opcode(
+					Instruction(
+						name=f"STOP",
+						arguments=OrderedSet([]),
+						resolved_arguments=Arguments(arguments=[], parent_block_id=None, traces=[])
+					),
+					variable_id=None,
+				)
+			)			
 			
 		return self
 	

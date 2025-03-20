@@ -26,20 +26,42 @@ class SymbolicOpcode(SymbolicValue):
 		self.pc = pc
 		self.block = block
 
+	def constant_fold(self):
+		return self
+
 	def __str__(self):
-		return f"SymbolicOpcode({self.opcode}, {self.inputs}, {self.pc})"
+		name = self.__class__.__name__
+		return f"{name}({self.opcode}, {self.inputs})\tpc: {self.pc}"
 	
 	def __hash__(self):
 		return int(hashlib.sha256(self.__str__().encode()).hexdigest(), 16)
 
 	def __repr__(self):
 		return self.__str__()
+	
+class SymbolicPcOpcode(SymbolicOpcode):
+	def __init__(self, id, opcode, inputs, pc, block):
+		super().__init__(id, opcode, inputs, pc, block)
+
+	def constant_fold(self):
+		return ConstantValue(-1, self.pc, -1, None)
+
+class SymbolicAndOpcode(SymbolicOpcode):
+	def __init__(self, id, opcode, inputs, pc, block):
+		super().__init__(id, opcode, inputs, pc, block)
+
+	def constant_fold(self):
+		[a, b] = self.inputs
+		return ConstantValue(-1, a.constant_fold().value & b.constant_fold().value, -1, None)
 
 class ConstantValue(SymbolicValue):
 	def __init__(self, id, value, pc, block):
 		super().__init__(id, pc)
 		self.value = value
 		self.block = block
+
+	def constant_fold(self):
+		return self
 
 	def __str__(self):
 		return f"ConstantValue({hex(self.value)})"	

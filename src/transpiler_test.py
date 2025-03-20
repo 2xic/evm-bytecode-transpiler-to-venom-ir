@@ -1,11 +1,10 @@
 from test_utils.compiler import SolcCompiler, OptimizerSettings
-from transpiler import get_ssa_program, transpile_from_bytecode
+from transpiler import get_ssa_program, compile_venom
 from test_utils.evm import execute_function
 from test_utils.abi import encode_function_call
 from eval import run_eval
 from symbolic import EVM
-import subprocess
-from bytecodes import MULTICALL, MINIMAL_PROXY, MINIMAL_PROXY_2, REGISTRY, ERC4626_RRATE_PROVIDER, ERC721_DROP
+from bytecodes import MULTICALL, MINIMAL_PROXY, MINIMAL_PROXY_2, REGISTRY, ERC4626_RRATE_PROVIDER, ERC721_DROP, SINGLE_BLOCK, PC_INVALID_JUMP, GLOBAL_JUMP, NICE_GUY_TX, INLINE_CALLS, REMIX_DEFAULT
 
 def execute_evm(bytecode_a, bytecode_b, function):
 	out_a = execute_function(bytecode_a, function)
@@ -13,16 +12,6 @@ def execute_evm(bytecode_a, bytecode_b, function):
 	assert out_a == \
 			out_b, f"{out_a} != {out_b} with {function.hex()}"
 	return True
-
-
-def compile_venom_ir(output):
-	with open("debug.venom", "w") as file:
-		file.write(output)
-
-	# TODO: import it as module instead ? 
-	result = subprocess.run(["python3", "-m", "vyper.cli.venom_main", "debug.venom"], capture_output=True, text=True)
-	assert result.returncode == 0, result.stderr
-	return bytes.fromhex(result.stdout.replace("0x", ""))
 
 
 def test_simple_hello_world():
@@ -34,7 +23,7 @@ def test_simple_hello_world():
 	}
 	"""
 	output = SolcCompiler().compile(code)
-	transpiled = compile_venom_ir(get_ssa_program(output).process().convert_into_vyper_ir())
+	transpiled = compile_venom(get_ssa_program(output).process().convert_into_vyper_ir())
 	
 	assert execute_evm(
 		output,
@@ -56,7 +45,7 @@ def test_simple_multiple_functions():
 	}
 	"""
 	output = SolcCompiler().compile(code)
-	transpiled = compile_venom_ir(get_ssa_program(output).process().convert_into_vyper_ir())
+	transpiled = compile_venom(get_ssa_program(output).process().convert_into_vyper_ir())
 	
 	assert execute_evm(
 		output,
@@ -104,7 +93,7 @@ def test_should_handle_loops():
 	assert output.has_unresolved_blocks == False
 	# TODO: add compilation check here also.	
 	if False:
-		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+		transpiled = compile_venom(output.convert_into_vyper_ir())
 		assert execute_evm(
 			bytecode,
 			transpiled,
@@ -127,7 +116,7 @@ def test_should_handle_phi_djmps():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -161,7 +150,7 @@ def skip_test_balance_calls():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert transpiled is not None
 
 def test_should_handle_storage():
@@ -180,7 +169,7 @@ def test_should_handle_storage():
 	output.process()
 	assert output.has_unresolved_blocks == False
 
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -205,7 +194,7 @@ def test_should_handle_control_flow():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -229,7 +218,7 @@ def skip_test_should_handle_control_flow():
 	output.process()
 	assert output.has_unresolved_blocks == False
 	"""
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -252,7 +241,7 @@ def test_nested_if_conditions_explicit():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -277,7 +266,7 @@ def test_nested_if_conditions_params_explicit():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -299,7 +288,7 @@ def test_block_conditions():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -322,7 +311,7 @@ def skip_test_simple_mapping_no_optimizations():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -344,7 +333,7 @@ def test_simple_mapping():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -367,7 +356,7 @@ def test_multiple_functions():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
@@ -421,7 +410,7 @@ def test_should_handle_coin_example():
 	output.process()
 	assert output.has_unresolved_blocks == False
 	if False:
-		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+		transpiled = compile_venom(output.convert_into_vyper_ir())
 
 def test_should_handle_sstore():
 	code = """
@@ -444,7 +433,7 @@ def test_should_handle_sstore():
 	output.process()
 	assert output.has_unresolved_blocks == False
 	if False:
-		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+		transpiled = compile_venom(output.convert_into_vyper_ir())
 		assert execute_evm(
 			bytecode,
 			transpiled,
@@ -465,7 +454,7 @@ def test_transpile_minimal_proxy_from_bytecode():
 		output = get_ssa_program(i)
 		output.process()
 		assert output.has_unresolved_blocks == False
-		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+		transpiled = compile_venom(output.convert_into_vyper_ir())
 		assert transpiled is not None
 
 def test_raw_bytecode():
@@ -473,12 +462,17 @@ def test_raw_bytecode():
 		REGISTRY,
 		ERC4626_RRATE_PROVIDER,
 		ERC721_DROP,
-		
+		SINGLE_BLOCK,
+		PC_INVALID_JUMP,
+		GLOBAL_JUMP,
+		#NICE_GUY_TX, 
+		INLINE_CALLS,
+		#REMIX_DEFAULT,
 	]:
 		output = get_ssa_program(i)
 		output.process()
 		assert output.has_unresolved_blocks == False
-		transpiled = compile_venom_ir(output.convert_into_vyper_ir())
+		transpiled = compile_venom(output.convert_into_vyper_ir())
 		assert transpiled is not None
 
 # Sanity check that the eval script should still work

@@ -170,15 +170,16 @@ def get_calling_blocks(opcodes):
 				condition = evm.pop_item()
 				evm.step()
 				assert condition is not None
+				next_offset = next_offset.constant_fold()
 				assert isinstance(next_offset, ConstantValue)
 				next_offset_value = next_offset.value
 			#	evm.step()
 				block.outgoing.add(next_offset_value)
-				if visited[(parent_id, next_offset_value)] < 10:
+				if visited[(parent_id, next_offset_value)] < 10 and next_offset_value in lookup_blocks:
 					blocks.append(
 						(lookup_blocks[next_offset_value], evm.clone(), block)
 					)
-					visited[(parent_id, next_offset_value)] += 1
+					visited[(parent_id, next_offset_value)] += 1					
 
 				pc = opcode.pc + 1
 				assert pc in lookup_blocks
@@ -214,11 +215,12 @@ def get_calling_blocks(opcodes):
 				# TODO: remove the need for the for loop.
 				while new_pc not in lookup_blocks and new_pc < max(lookup_blocks.keys()):
 					new_pc += 1
-				blocks.append(
-					(lookup_blocks[new_pc], evm.clone(), block)
-				)
-				block.outgoing.add(new_pc)
-				visited[(parent_id, new_pc)] += 1
+				if new_pc in lookup_blocks:
+					blocks.append(
+						(lookup_blocks[new_pc], evm.clone(), block)
+					)
+					block.outgoing.add(new_pc)
+					visited[(parent_id, new_pc)] += 1
 
 
 	"""
