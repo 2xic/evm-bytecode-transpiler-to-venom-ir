@@ -7,6 +7,7 @@ class OptimizerSettings:
 	optimizer_enabled: bool = False
 	optimization_runs: int = 200
 	deduplicate: bool = False
+	evm_version: str = "paris"
 
 	def optimize(self, optimization_runs = 200, via_ir=True):
 		self.via_ir = via_ir
@@ -40,7 +41,7 @@ class SolcCompiler:
 					"metadata":{
 						"appendCBOR": False,
 					},
-					"evmVersion": "paris",
+					"evmVersion": settings.evm_version,
 					"optimizer": {
 						"enabled": settings.optimizer_enabled,
 						"runs": settings.optimization_runs,

@@ -4,7 +4,7 @@ from test_utils.evm import execute_function
 from test_utils.abi import encode_function_call
 from eval import run_eval
 from symbolic import EVM
-from bytecodes import MULTICALL, MINIMAL_PROXY, MINIMAL_PROXY_2, REGISTRY, ERC4626_RRATE_PROVIDER, ERC721_DROP, SINGLE_BLOCK, PC_INVALID_JUMP, GLOBAL_JUMP, NICE_GUY_TX, INLINE_CALLS, REMIX_DEFAULT
+from test_utils.bytecodes import MULTICALL, MINIMAL_PROXY, MINIMAL_PROXY_2, REGISTRY, ERC4626_RRATE_PROVIDER, ERC721_DROP, SINGLE_BLOCK, PC_INVALID_JUMP, GLOBAL_JUMP, NICE_GUY_TX, INLINE_CALLS, REMIX_DEFAULT
 
 def execute_evm(bytecode_a, bytecode_b, function):
 	out_a = execute_function(bytecode_a, function)
@@ -91,14 +91,12 @@ def test_should_handle_loops():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	# TODO: add compilation check here also.	
-	if False:
-		transpiled = compile_venom(output.convert_into_vyper_ir())
-		assert execute_evm(
-			bytecode,
-			transpiled,
-			encode_function_call("test()"),        
-		)
+	transpiled = compile_venom(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("test()"),        
+	)
 
 def test_should_handle_phi_djmps():
 	code = """
@@ -201,7 +199,7 @@ def test_should_handle_control_flow():
 		encode_function_call("sumUpTo()"),        
 	)
 
-def skip_test_should_handle_control_flow():
+def test_should_handle_control_flow():
 	code = """
 	contract Hello {
 		function sumUpTo() public pure returns (uint) {
@@ -217,14 +215,12 @@ def skip_test_should_handle_control_flow():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks == False
-	"""
 	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
 		transpiled,
 		encode_function_call("sumUpTo()"),        
 	)
-	"""	
 
 def test_nested_if_conditions_explicit():
 	code = """
@@ -296,7 +292,7 @@ def test_block_conditions():
 	)
 
 
-def skip_test_simple_mapping_no_optimizations():
+def test_simple_mapping_no_optimizations():
 	code = """
 	contract Hello {
 		mapping(uint256 => uint256) public value;

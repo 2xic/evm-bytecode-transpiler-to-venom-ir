@@ -1,5 +1,5 @@
-# bytecode venom transpiler (work in progress)
-**Currently limited support, but shows early signs of life**
+# (wip) bytecode venom transpiler
+_Currently limited support, but shows early signs of life_
 
 Input raw EVM bytecode and get Venom IR out. 
 
@@ -22,17 +22,19 @@ pip3 install -r requirments.txt
 608060405236600310610010575f5ffd5b5f3560e01c63c0734b1114610023575f5ffd5b3461010857367ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc015f136101045760015f905b80600b1161006a5750604051908152602090f35b80820191829011156100a55750507f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b80196100da5750507f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff50600101610056565b5f5ffd5b5f5ffd
 ```
 
-That will also generate the plot of the Venom IR that was used to transpile the bytecode.
+That will also generate the plot of the Venom IR that was used to transpile the bytecode into `./generated`.
 
 ![venom ir graph](./readme/ssa.png)
 
 
-## Looking at the ir
+## Debugging the IR
+There is a simple bash script in the root of this repo that can be used to view the IR of Vyper contract and also compile raw Venom IR. Useful for debugging.
+
 ```bash
 # Generates the Venom IR output
-./generator generate [vyper file]
+./venom.sh generate [vyper file]
 # Compiles the Venom IR output
-./generator compile [venom file]
+./venom.sh compile [venom file]
 ```
 
 ## Resources

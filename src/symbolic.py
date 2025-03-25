@@ -44,7 +44,7 @@ class SymbolicPcOpcode(SymbolicOpcode):
 		super().__init__(id, opcode, inputs, pc, block)
 
 	def constant_fold(self):
-		return ConstantValue(-1, self.pc, -1, None)
+		return ConstantValue(-1, self.pc, None)
 
 class SymbolicAndOpcode(SymbolicOpcode):
 	def __init__(self, id, opcode, inputs, pc, block):
@@ -52,11 +52,11 @@ class SymbolicAndOpcode(SymbolicOpcode):
 
 	def constant_fold(self):
 		[a, b] = self.inputs
-		return ConstantValue(-1, a.constant_fold().value & b.constant_fold().value, -1, None)
+		return ConstantValue(-1, a.constant_fold().value & b.constant_fold().value, None)
 
 class ConstantValue(SymbolicValue):
-	def __init__(self, id, value, pc, block):
-		super().__init__(id, pc)
+	def __init__(self, id, value, block):
+		super().__init__(id, None)
 		self.value = value
 		self.block = block
 

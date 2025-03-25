@@ -68,7 +68,6 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				var = ConstantValue(
 					id=variable_id.get(opcode.pc, variable_counter), 
 					value=opcode.value(),
-					pc=opcode.pc,
 					block=block.start_offset,
 				)
 				evm.stack.append(var)
@@ -83,13 +82,13 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							instruction=Instruction(
 								name="PUSH",
 								resolved_arguments=Arguments(
-									arguments=[var],
+									values=[var],
 									parent_block_id=parent_id,
 									traces=traces,
 								),
 								arguments=OrderedSet([
 									Arguments(
-										arguments=[var],
+										values=[var],
 										parent_block_id=parent_id,
 										traces=traces,
 									)
@@ -139,7 +138,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							arguments=OrderedSet(
 								[
 									Arguments(
-										arguments=[Block(next_offset, pc=opcode.pc)],
+										values=[Block(next_offset)],
 										parent_block_id=(parent.id if parent is not None else None),
 										traces=traces,
 									)
@@ -152,7 +151,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				else:
 					previous_op.instruction.arguments.append(
 						Arguments(
-							arguments=[Block(next_offset, pc=opcode.pc)],
+							values=[Block(next_offset)],
 							parent_block_id=(parent.id if parent is not None else None),
 							traces=traces,
 						)
@@ -195,10 +194,10 @@ def get_ssa_program(bytecode) -> SsaProgram:
 						name="JUMPI",
 						arguments=OrderedSet([
 							Arguments(
-								arguments=[
+								values=[
 									condition,
-									Block(next_offset, pc=opcode.pc), 
-									Block(ConstantValue(None, second_offset, None, None), pc=opcode.pc)
+									Block(next_offset), 
+									Block(ConstantValue(None, second_offset, None))
 								],
 								parent_block_id=(parent.id if parent is not None else None),
 								traces=traces,
@@ -212,10 +211,10 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				else:
 					previous_op.instruction.arguments.append(
 						Arguments(
-							arguments=[
+							values=[
 								condition,
-								Block(next_offset, pc=opcode.pc), 
-								Block(ConstantValue(None, second_offset, None, None), pc=opcode.pc)
+								Block(next_offset), 
+								Block(ConstantValue(None, second_offset, None))
 							],
 							parent_block_id=(parent.id if parent is not None else None),
 							traces=traces,
@@ -251,7 +250,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 						name=opcode.name,
 						arguments=OrderedSet([
 							Arguments(
-								arguments=inputs,
+								values=inputs,
 								parent_block_id=(parent.id if parent is not None else None),
 								traces=traces,
 							)
@@ -267,7 +266,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				else:
 					previous_op.instruction.arguments.append(
 						Arguments(
-							arguments=inputs,
+							values=inputs,
 							parent_block_id=(parent.id if parent is not None else None),
 							traces=traces,
 						)
@@ -303,20 +302,28 @@ def transpile_from_bytecode(bytecode, generate_output=False):
 	dot = graphviz.Digraph(comment='cfg', format='png')
 	output = get_ssa_program(bytecode)
 	output.process()
-	for blocks in output.blocks:
+	for ssa_block in output.blocks:
 		block = []
-		for opcode in blocks.preceding_opcodes:
+		for opcode in ssa_block.preceding_opcodes:
 			block.append(f"\t{opcode} \\l")
-		for opcode in blocks.opcodes:
+		for opcode in ssa_block.opcodes:
 			block.append(f"\t{opcode} \\l")
 		if len(block) == 0:
 			block.append("<fallthrough> \\l")
-		block.insert(0, f"block_{hex(blocks.id)}: \\l")
-		dot.node(hex(blocks.id), "".join(block), shape="box")
-		for edge in blocks.outgoing:
-			dot.edge(hex(blocks.id), hex(edge))
+		block.insert(0, f"block_{hex(ssa_block.id)}: \\l")
+		dot.node(hex(ssa_block.id), "".join(block), shape="box")
+		true_block, false_block = ssa_block.conditional_outgoing_block
+
+		if true_block is not None and false_block is not None:
+			dot.edge(hex(ssa_block.id), hex(false_block), label="f", color="red")
+			dot.edge(hex(ssa_block.id), hex(true_block), label="t", color="green")
+		else: 
+			for edge in ssa_block.outgoing:
+				dot.edge(hex(ssa_block.id), hex(edge))
 	
 	if generate_output:
+		with open("output/program.bin", "w") as file:
+			file.write(bytecode.hex())
 		dot.render("output/ssa", cleanup=True)
 		with open("output/generated.venom", "w") as file:
 			file.write(output.convert_into_vyper_ir(strict=False))

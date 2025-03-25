@@ -101,8 +101,6 @@ def main():
     total_count_fail = 0
     error_bytecode = []
 
-    biggest_delta = None
-    delta_out = [] 
     for i in result_response["result"]["rows"]:
         code = strip_metadata(bytes.fromhex(i["code"].lstrip("0x")))
         if len(code) > 0:
