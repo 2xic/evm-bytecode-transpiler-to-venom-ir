@@ -4,6 +4,7 @@ We need a small symbolic EVM to be able to handle the lookups
 from copy import deepcopy
 import hashlib
 
+
 class SymbolicValue:
 	def __init__(self, id, pc):
 		self.id = id

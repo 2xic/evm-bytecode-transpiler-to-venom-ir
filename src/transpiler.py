@@ -259,7 +259,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					)	
 					ssa_block.opcodes.append(Opcode(
 						instruction=instruction,
-						variable_id=(variable_counter if opcode.outputs > 0 else None),
+						variable_name=(variable_counter if opcode.outputs > 0 else None),
 					))	
 					if opcode.outputs > 0:
 						variable_counter += 1
