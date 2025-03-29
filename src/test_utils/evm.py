@@ -4,11 +4,13 @@ from eth.chains.base import MiningChain
 from eth.rlp.headers import BlockHeader
 from eth.abc import ComputationAPI
 
-CODE_ADDRESS = b'\x21' * 20
-SENDER_ADDRESS = b'\x22' * 20
+CODE_ADDRESS = b"\x21" * 20
+SENDER_ADDRESS = b"\x22" * 20
+
 
 class SimpleChain(MiningChain):
-	vm_configuration = ((0, CancunVM),) 
+	vm_configuration = ((0, CancunVM),)
+
 
 def run_vm(bytecode: bytes, data: bytes, storage={}, wei_value=0) -> ComputationAPI:
 	chain_db = AtomicDB()
@@ -23,7 +25,7 @@ def run_vm(bytecode: bytes, data: bytes, storage={}, wei_value=0) -> Computation
 		vm.state.set_storage(CODE_ADDRESS, key, value)
 	vm.state.set_code(CODE_ADDRESS, bytecode)
 	vm.state.set_balance(SENDER_ADDRESS, 20000000000)
-	vm.state.set_balance(CODE_ADDRESS, 	 20000000000)
+	vm.state.set_balance(CODE_ADDRESS, 20000000000)
 
 	computation = vm.execute_bytecode(
 		gas_price=1,
@@ -40,4 +42,4 @@ def run_vm(bytecode: bytes, data: bytes, storage={}, wei_value=0) -> Computation
 
 
 def execute_function(bytecode, function):
-    return run_vm(bytecode, function).output.hex()
+	return run_vm(bytecode, function).output.hex()

@@ -1,8 +1,9 @@
 """
 We need to convert the bytecode into basic blocks so that we can jump between them using the IR
 """
+
 from dataclasses import dataclass
-from opcodes import Opcode
+from bytecode_transpiler.opcodes import Opcode
 from typing import List
 
 END_OF_BLOCK_OPCODES = [
@@ -13,17 +14,17 @@ END_OF_BLOCK_OPCODES = [
 	"RETURN",
 	"INVALID",
 ]
-START_OF_BLOCK_OPCODES = [
-	"JUMPDEST"
-]
+START_OF_BLOCK_OPCODES = ["JUMPDEST"]
+
 
 @dataclass
 class BasicBlock:
 	opcodes: List[Opcode]
 
-	@property	
+	@property
 	def id(self):
 		return self.opcodes[0].pc
+
 
 def get_basic_blocks(opcodes) -> List[BasicBlock]:
 	blocks = []
@@ -32,14 +33,10 @@ def get_basic_blocks(opcodes) -> List[BasicBlock]:
 		if i.name in END_OF_BLOCK_OPCODES:
 			current_block.opcodes.append(i)
 			blocks.append(current_block)
-			current_block = BasicBlock(
-				opcodes=[]
-			)
+			current_block = BasicBlock(opcodes=[])
 		elif i.name in START_OF_BLOCK_OPCODES:
 			blocks.append(current_block)
-			current_block = BasicBlock(
-				opcodes=[]
-			)
+			current_block = BasicBlock(opcodes=[])
 			current_block.opcodes.append(i)
 		else:
 			current_block.opcodes.append(i)

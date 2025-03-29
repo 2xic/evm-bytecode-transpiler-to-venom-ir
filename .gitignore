@@ -4,6 +4,7 @@ debug.venom
 *.sol
 output
 .cache
+*.egg-info
 
 # Eval for https://huggingface.co/datasets/Zellic/smart-contract-fiesta
 fiesta.py
