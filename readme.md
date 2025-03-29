@@ -13,7 +13,7 @@ I was working on my own compiler alternative to Solidity during the autumn of 20
 ## Example
 First install what you need to run this
 ```bash
-pip3 install -r requirments.txt
+pip3 install -r requirements.txt
 ```
 
 ```bash

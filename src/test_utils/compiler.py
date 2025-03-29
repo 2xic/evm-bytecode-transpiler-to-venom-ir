@@ -8,6 +8,7 @@ class OptimizerSettings:
 	optimization_runs: int = 200
 	deduplicate: bool = False
 	evm_version: str = "paris"
+	solc_version: str = "0.8.26"
 
 	def optimize(self, optimization_runs = 200, via_ir=True):
 		self.via_ir = via_ir
@@ -21,6 +22,7 @@ class SolcCompiler:
 		return self._get_solc_bytecode(output, "main.sol")
 
 	def _get_solidity_output(self, file_content, settings: OptimizerSettings):
+		solcx.install_solc(settings.solc_version)
 		request = {
 				"language": "Solidity",
 				"sources": {
@@ -55,7 +57,7 @@ class SolcCompiler:
 		}   
 		return solcx.compile_standard(
 			request,
-			solc_binary="/usr/local/bin/solc-826"
+			solc_version=settings.solc_version,
 		)
 
 	def _get_solc_bytecode(self, output, file, key="deployedBytecode"):

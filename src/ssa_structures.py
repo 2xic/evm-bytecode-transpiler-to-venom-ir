@@ -12,18 +12,6 @@ from dataclasses import dataclass
 IRRELEVANT_SSA_OPCODES = ["JUMPDEST", "SWAP", "DUP", "JUMPDEST", "POP", "PUSH"]
 JUMP_OPCODE = "JUMP"
 
-"""
-One bug we currently have
-- You can have phi functions in a lower block 
-	- This jumps into a new block
-	- Child block here MAY or MAY NOT. 
-	- This is particularly an issue for via-ir
-- ^ So we need to add some validation 
-	- Phi functions that are used, must be reachable in a unambiguous way.
-	- Sometimes you don't even need to use phi functions are you can check the input values.
-	- So if the input variable is static, we can just reuse it.
-"""
-
 def mapper(x):
 	if isinstance(x, ConstantValue):
 		return str(x.value)
@@ -40,7 +28,7 @@ class Block:
 
 	def __str__(self):
 		return str(VyperBlock(self.id.value))
-	
+
 	def __hash__(self):
 		return self.id.value
 
@@ -226,48 +214,73 @@ def has_preceding_instr(block: 'SsaBlock', new_var):
 	return False
 
 
-def find_split_index(i: Opcode):
-	found_split_point = -1
-	index = 0
-	prev = None
-	
+def find_split_index(i: OrderedSet[Arguments], blocks):	
 	parents = OrderedSet()
-	for v in i.instruction.arguments:
+	# First find all the parents of each block
+	for v in i:
 		parents.add(v.parent_block_id)
 
-	while True:
-		current = OrderedSet()
-		for arg_trace in i.instruction.arguments:
-			if index < len(arg_trace.traces):
-				current.add(arg_trace.traces[index])
-		if len(current) == len(i.instruction.arguments):
-			found_split_point = index - 1
-			break
-		index += 1
-		if len(current) == 0:
-			prev = None
-			found_split_point = -1
-			break
-		prev = current[0]
+	# CHeck first if the parent is a good starting block.
+	if len(parents) == 1 and len(i) == len(blocks[parents[0]].incoming):
+		return parents[0]
 
-	# No shared trace, maybe we can reuse the same parent.
-	if len(parents) == 1 and found_split_point == -1:
-		return -1, parents[0]
-	return found_split_point, prev
+	# Iterate over all the arguments
+	# Try to find one argument where all the inbound arguments are unique
+	index = 0
+	prev = None
+	while True:
+		current = OrderedSet(
+			[
+				arg_trace.traces[index]
+				for arg_trace in i if index < len(arg_trace.traces)
+			]
+		)
+		if len(current) == 0:
+			break
+		elif len(current) == len(i):
+			return prev
+		else:
+			prev = current[0]
+			index += 1
+	return prev
 
 def find_relevant_split_node(arguments: OrderedSet[Arguments], blocks: Dict[int, 'SsaBlock']):
+	"""
+	We have an instructions with a few arguments that might have been declared at different blocks.
+
+	1. Find all shared blocks
+	2. Find the parent of the first shared block that has the same amount of input arguments
+	3. Check that this block is an incoming block of all the vars
+	"""
 	entries = None
+	block_ids = OrderedSet([])
 	for i in arguments:
 		if entries is None:
 			entries = OrderedSet(i.traces)
 		else:
 			entries = entries.union(i.traces)
-	for index, v in enumerate(entries):
-		if v is None:
+		block_ids.add(i.parent_block_id)
+
+	split_index = {}
+	for index, block_id in enumerate(entries):
+		if block_id is None:
 			continue
-		if len(blocks[v].incoming) == len(arguments):
-			return index, v
-	return -1, None
+		next_block = blocks[block_id]
+		if len(next_block.incoming) == len(arguments):
+			for index, i in enumerate(arguments):
+				if block_id not in i.traces:
+					break
+				split_index[index] = i.traces[i.traces.index(block_id) + 1]
+			else:
+				return index, block_id, split_index
+
+	if len(block_ids) == 1:
+		split_index = {}
+		for index, i in enumerate(arguments):
+			split_index[index] = i.traces[1]
+		return -1, block_ids[0], split_index
+
+	return -1, None, None
 
 def find_relevant_parent(defined_block_id, blocks, current_block):
 	queue = [
@@ -291,15 +304,15 @@ def resolve_phi_functions(
 		entries: List[Arguments], 
 		argument: int,
 		blocks: Dict[int, 'SsaBlock'], 
-		parent_block: Callable[[Arguments], int],
 		block: 'SsaBlock',
 	):
 	phi_function = PhiFunction(edge=OrderedSet())
-	for args in entries:
+	for _, args in enumerate(entries):
 		var_value = args.values[argument]
 		if isinstance(var_value, Block):
 			var_name = VyperBlockRef(VyperBlock(var_value.id.value))
-			block_id = parent_block(args)
+			block_id = var_value.id.block
+
 			new_var = f"{var_name} = {var_value}"
 			if not has_preceding_instr(blocks[block_id], new_var):
 				blocks[block_id].preceding_opcodes.append(create_opcode(
@@ -328,6 +341,7 @@ def resolve_phi_functions(
 						args.traces.index(block.id) + 1
 					]
 					assert block_id != block.id
+					
 				new_var = VyperVariable(
 					VyperVarRef(var_value.id),
 					var_value.value
@@ -343,7 +357,6 @@ def resolve_phi_functions(
 					)
 				)
 		else:			
-			value = mapper(var_value)
 			parent_block_id = find_relevant_parent(
 				var_value.block,
 				blocks,
@@ -352,13 +365,13 @@ def resolve_phi_functions(
 			phi_function.add_edge(
 				PhiEdge(
 					parent_block_id,
-					value	
+					mapper(var_value)	
 				)
 			)
 
 	return phi_function
 
-def handle_resolve_arguments(i: Opcode, blocks: Dict[str, 'SsaBlock'], phi_counter: 'PhiCounter', block: 'SsaBlock', parent_block):
+def handle_resolve_arguments(i: Opcode, blocks: Dict[str, 'SsaBlock'], phi_counter: 'PhiCounter', block: 'SsaBlock'):
 	instruction_args = i.instruction.arguments
 	resolved_arguments = []
 	for argument in range((i.instruction.arg_count)):
@@ -366,8 +379,7 @@ def handle_resolve_arguments(i: Opcode, blocks: Dict[str, 'SsaBlock'], phi_count
 			instruction_args,
 			argument,
 			blocks,
-			parent_block=parent_block,
-			block=block,
+			block,
 		)
 
 		if phi_functions.can_skip:
@@ -483,38 +495,28 @@ class SsaBlock:
 						blocks,
 						phi_counter,
 						block=self,
-						parent_block=lambda v: v.parent_block_id
 					)
 					i.instruction.resolved_arguments = create_resolved_arguments(
 						resolved_arguments
 					)
 				elif i.instruction.name == JUMP_OPCODE:
-					found_split_point, prev = find_split_index(i)
-					found_split_point, prev = find_relevant_split_node(i.instruction.arguments, blocks)
+					prev = find_split_index(i.instruction.arguments, blocks)
 					if prev is not None:
-					#	assert prev == prev_2, f"{prev} != {prev_2}"
-					#	print(found_split_point, prev)
-					#	raise Exception("hm?")
-					#	print(i, found_split_point, prev)
-					#	print("find_relevant_split_node ", hex(prev_2), found_split_point_2)
-					#	print("prev ", hex(prev), found_split_point)
 						resolved_arguments = handle_resolve_arguments(
 							i,
 							blocks,
 							phi_counter,
 							block=blocks[prev],
-							parent_block=lambda v: v.traces[found_split_point + 1],
 						)
 						i.instruction.resolved_arguments = create_resolved_arguments(resolved_arguments)
 				else:
-					_, prev = find_split_index(i)
+					_, prev, _ = find_relevant_split_node(i.instruction.arguments, blocks)
 					if prev is not None:
 						resolved_arguments = handle_resolve_arguments(
 							i,
 							blocks,
 							phi_counter,
 							block=blocks[prev],
-							parent_block=None,
 						)
 						i.instruction.resolved_arguments = create_resolved_arguments(resolved_arguments)
 		return self

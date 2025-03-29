@@ -57,7 +57,7 @@ class SymbolicAndOpcode(SymbolicOpcode):
 
 class ConstantValue(SymbolicValue):
 	def __init__(self, id, value, block):
-		super().__init__(id, None)
+		super().__init__(id, block)
 		self.value = value
 		self.block = block
 

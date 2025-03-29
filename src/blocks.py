@@ -22,7 +22,7 @@ class BasicBlock:
 	opcodes: List[Opcode]
 
 	@property	
-	def start_offset(self):
+	def id(self):
 		return self.opcodes[0].pc
 
 def get_basic_blocks(opcodes) -> List[BasicBlock]:
