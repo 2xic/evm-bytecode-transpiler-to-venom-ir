@@ -3,7 +3,45 @@ We need a small symbolic EVM to be able to handle the lookups
 """
 
 from copy import deepcopy
-import hashlib
+from typing import List
+
+"""
+TODO: This should replace the existing traces type
+"""
+
+
+class ExecutionTrace:
+	def __init__(self, blocks=[]):
+		self.blocks: List[int] = blocks
+
+	def __str__(self):
+		return f"{self.blocks}"
+
+	def __repr__(self):
+		return self.__str__()
+
+
+# For each
+class ProgramTrace:
+	def __init__(self):
+		self.execution = ExecutionTrace()
+		self.traces: List[ExecutionTrace] = []
+
+	def block_traces(self, block_id) -> List[ExecutionTrace]:
+		traces: List[ExecutionTrace] = []
+		for i in self.traces:
+			if block_id in i.blocks:
+				traces.append(i)
+		return traces
+
+	def fork(self):
+		# Each time there is a conditional block we need to fork the trace.
+		self.traces.append(self.execution)
+		self.execution = ExecutionTrace(deepcopy(self.execution.blocks))
+		return self.execution
+
+	def create(self):
+		return self.execution
 
 
 class SymbolicValue:
@@ -34,9 +72,6 @@ class SymbolicOpcode(SymbolicValue):
 	def __str__(self):
 		name = self.__class__.__name__
 		return f"{name}({self.opcode}, {self.inputs})\tpc: {self.pc}"
-
-	def __hash__(self):
-		return int(hashlib.sha256(self.__str__().encode()).hexdigest(), 16)
 
 	def __repr__(self):
 		return self.__str__()
@@ -70,38 +105,10 @@ class ConstantValue(SymbolicValue):
 	def constant_fold(self):
 		return self
 
-	def __str__(self):
-		return f"ConstantValue({hex(self.value)})"
-
-
-class EvmStack:
-	def __init__(self, stack=[]):
-		self.stack = stack
-
-	def append(self, item):
-		self.stack.append(item)
-		return self
-
-	def pop(self, idx=-1):
-		return self.stack.pop(idx)
-
-	def __setitem__(self, idx, val):
-		self.stack[idx] = val
-		return self
-
-	def __getitem__(self, idx):
-		return self.stack[idx]
-
-	def __len__(self):
-		return len(self.stack)
-
-	def __hash__(self):
-		return "\n".join(self.stack)
-
 
 class EVM:
 	def __init__(self, pc):
-		self.stack = []  # EvmStack()
+		self.stack = []
 		self.pc = pc
 		self.trace_id = 0
 

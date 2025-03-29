@@ -773,6 +773,33 @@ def test_should_handle_sstore_compile():
 	)
 
 
+simple_double_mapping = """
+// From https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html#subcurrency-example
+contract SimpleMapping {
+	mapping(address => mapping(address => bool)) public mappings;
+
+	function setResults(address value) public returns(address) {
+		mappings[address(0)][value] = true;
+		return value;
+	}
+}
+"""
+
+
+def test_simple_double_mapping():
+	bytecode = SolcCompiler().compile(simple_double_mapping)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks is False
+
+	transpiled = compile_venom(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("setResults(address)", ["address"], ["0x" + "ff" * 20]),
+	)
+
+
 def test_invalid_opcode():
 	# Invalid opcodes are not considered terminating in Vyper.
 	# So we should replace them with revert or something.
@@ -788,9 +815,7 @@ def test_invalid_opcode():
 	)
 
 
-@pytest.mark.skip(reason="Skipping this test for now")
 def test_transpile_multicall_from_bytecode():
-	# Should at least compile
 	output = get_ssa_program(MULTICALL)
 	output.process()
 	assert output.has_unresolved_blocks is True
@@ -813,9 +838,7 @@ def test_raw_bytecode():
 		SINGLE_BLOCK,
 		PC_INVALID_JUMP,
 		GLOBAL_JUMP,
-		# NICE_GUY_TX,
 		INLINE_CALLS,
-		# REMIX_DEFAULT,
 	]:
 		output = get_ssa_program(i)
 		output.process()

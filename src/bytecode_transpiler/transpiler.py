@@ -6,7 +6,7 @@ from bytecode_transpiler.opcodes import (
 	PushOpcode,
 	SwapOpcode,
 )
-from bytecode_transpiler.blocks import (
+from bytecode_transpiler.bytecode_basic_blocks import (
 	get_basic_blocks,
 	BasicBlock,
 	END_OF_BLOCK_OPCODES,
@@ -17,6 +17,8 @@ from bytecode_transpiler.symbolic import (
 	SymbolicOpcode,
 	SymbolicPcOpcode,
 	SymbolicAndOpcode,
+	ProgramTrace,
+	ExecutionTrace,
 )
 from typing import Dict, Optional
 import graphviz
@@ -53,16 +55,18 @@ def create_new_traces(parent, traces):
 def get_ssa_program(bytecode) -> SsaProgram:
 	basic_blocks = get_basic_blocks(get_opcodes_from_bytes(bytecode))
 	blocks_lookup: Dict[str, BasicBlock] = {block.id: block for block in basic_blocks}
-	blocks: List[tuple[BasicBlock, EVM, Optional[SsaBlock], List[int]]] = [
-		(blocks_lookup[0], EVM(pc=0), None, [])
-	]
 	converted_blocks = {}
 	variable_counter = 0
 	variable_id = {}
 	visited = defaultdict(int)
+	program_trace = ProgramTrace()
+
+	blocks: List[
+		tuple[BasicBlock, EVM, Optional[SsaBlock], List[int], ExecutionTrace]
+	] = [(blocks_lookup[0], EVM(pc=0), None, [], program_trace.create())]
 
 	while len(blocks) > 0:
-		(block, evm, parent, traces) = blocks.pop(0)
+		(block, evm, parent, traces, execution_trace) = blocks.pop(0)
 		parent_id = parent.id if parent is not None else None
 		ssa_block = SsaBlock(
 			id=block.id,
@@ -77,6 +81,8 @@ def get_ssa_program(bytecode) -> SsaProgram:
 			ssa_block = converted_blocks[ssa_block.id]
 		if parent is not None:
 			ssa_block.incoming.add(parent.id)
+
+		execution_trace.blocks.append(block.id)
 
 		# Do the opcode execution
 		for index, opcode in enumerate(block.opcodes):
@@ -151,6 +157,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							evm.clone(),
 							ssa_block,
 							create_new_traces(parent_id, traces),
+							execution_trace,
 						)
 					)
 					ssa_block.outgoing.add(next_offset_value)
@@ -199,6 +206,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							evm.clone(),
 							ssa_block,
 							create_new_traces(parent_id, traces),
+							program_trace.fork(),
 						)
 					)
 					ssa_block.outgoing.add(next_offset_value)
@@ -220,6 +228,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							evm.clone(),
 							ssa_block,
 							create_new_traces(parent_id, traces),
+							execution_trace,
 						)
 					)
 					visited[(parent_id, second_offset)] += 1
@@ -327,14 +336,21 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							evm.clone(),
 							ssa_block,
 							create_new_traces(parent_id, traces),
+							execution_trace,
 						)
 					)
 					ssa_block.outgoing.add(new_pc)
-	return SsaProgram(list(converted_blocks.values()))
+	return SsaProgram(
+		blocks=list(converted_blocks.values()), program_trace=program_trace
+	)
 
 
 def transpile_from_single_solidity_file(
-	filepath, via_ir, optimization_strategy, generate_output
+	filepath,
+	via_ir,
+	optimization_strategy,
+	generate_output,
+	debug=False,
 ):
 	optimization_settings = (
 		CompilerSettings().optimize(optimization_runs=2**31 - 1)
@@ -346,11 +362,16 @@ def transpile_from_single_solidity_file(
 		code = file.read()
 		bytecode = SolcCompiler().compile(code, settings=optimization_settings)
 		print(f"Solc: {bytecode.hex()}")
-		return transpile_from_bytecode(bytecode, optimization_strategy, generate_output)
+		return transpile_from_bytecode(
+			bytecode, optimization_strategy, generate_output, debug
+		)
 
 
 def transpile_from_bytecode(
-	bytecode, optimization_strategy=DEFAULT_OPTIMIZATION_LEVEL, generate_output=False
+	bytecode,
+	optimization_strategy=DEFAULT_OPTIMIZATION_LEVEL,
+	generate_output=False,
+	debug=False,
 ):
 	dot = graphviz.Digraph(comment="cfg", format="png")
 	output = get_ssa_program(bytecode)
@@ -406,8 +427,15 @@ def main():
 		help="Compile the Solidity file with via-ir",
 	)
 	parser.add_argument(
+		"--debug",
+		default=False,
+		action="store_true",
+		help="Debug mode",
+	)
+	parser.add_argument(
 		"--optimizer",
 		choices=["codesize", "gas", "none"],
+		default="default",
 		help="Optimization strategy (codesize or gas)",
 	)
 
@@ -419,20 +447,25 @@ def main():
 	optimization_strategy = {
 		"gas": GAS_OPTIMIZATION_LEVEL,
 		"codesize": CODE_OPTIMIZATION_LEVEL,
+		"default": DEFAULT_OPTIMIZATION_LEVEL,
 		"none": NO_OPTIMIZATION,
 	}[args.optimizer]
 
 	if args.filepath:
 		print(
 			transpile_from_single_solidity_file(
-				args.filepath, args.via_ir, optimization_strategy, generate_output=True
+				args.filepath,
+				args.via_ir,
+				optimization_strategy,
+				generate_output=True,
+				debug=args.debug,
 			).hex()
 		)
 	elif args.bytecode:
 		bytecode = bytes.fromhex(args.bytecode.replace("0x", ""))
 		print(
 			transpile_from_bytecode(
-				bytecode, optimization_strategy, generate_output=True
+				bytecode, optimization_strategy, generate_output=True, debug=args.debug
 			).hex()
 		)
 

@@ -24,13 +24,6 @@ class PushOpcode(Opcode):
 	def value(self):
 		return int(self.data.hex(), 16)
 
-	def __str__(self):
-		if len(self.data) > 0:
-			data = self.data.hex()
-			return f"{self.name} 0x{data}"
-		else:
-			return self.name
-
 
 class DupOpcode(Opcode):
 	def __init__(self, name, inputs, outputs, pc, index):
@@ -151,14 +144,15 @@ def build_opcodes_table():
 	return opcodes
 
 
+INVALID_OPCODE = 0xFE
+
+
 def get_opcodes_from_bytes(bytecode):
 	opcodes = build_opcodes_table()
 	outputs = []
 	instruction_pointer = 0
 	while instruction_pointer < len(bytecode):
-		opcode = opcodes.get(
-			bytecode[instruction_pointer], opcodes[0xFE]
-		)  # 0xFE = Invalid
+		opcode = opcodes.get(bytecode[instruction_pointer], opcodes[INVALID_OPCODE])
 		if "PUSH" in opcode["name"]:
 			size = opcode["opcode"] - 0x5F
 			if size == 0:
