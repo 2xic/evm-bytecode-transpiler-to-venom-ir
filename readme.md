@@ -1,5 +1,5 @@
 # (wip) bytecode venom transpiler
-_Currently limited support, but shows early signs of life_
+**_Currently limited support, but shows early signs of life_**
 
 Input raw EVM bytecode and get Venom IR out. 
 
@@ -9,6 +9,13 @@ I was working on my own compiler alternative to Solidity during the autumn of 20
 ## Known issues
 - The placement of phi functions is not fully implemented and also not fully working. There is some basic support.
 - There will be edges cases in case of `CODECOPY` which we don't correctly cover. Or more generally, we don't model model memory or storage atm which could cause incorrect transpiled code.
+
+## Evals
+The script used to generate these are in [evals](./src/evals/eval.py)
+
+![bytecode sizes](./readme/bytecode_sizes.png)
+
+![gas usage](./readme/gas_usage.png)
 
 ## Example
 First install what you need to run this
@@ -33,7 +40,6 @@ That will also generate the plot of the Venom IR that was used to transpile the 
 
 ![venom ir graph](./readme/ssa.png)
 
-
 ## Debugging the IR
 There is a simple bash script in the root of this repo that can be used to view the IR of Vyper contract and also compile raw Venom IR. Useful for debugging.
 
@@ -48,3 +54,4 @@ There is a simple bash script in the root of this repo that can be used to view 
 - [Wikipedia article on SSA](https://en.wikipedia.org/wiki/Static_single-assignment_form)
 - [Venom IR readme](https://github.com/vyperlang/vyper/blob/master/vyper/venom/README.md)
 - [Presetnation on Rattle](https://www.trailofbits.com/documents/RattleRecon.pdf) which converts bytecode into SSA form. Some ideas are applicable here. It's built on top of this [paper](https://c9x.me/compile/bib/braun13cc.pdf) which I should take more ideas from.
+- [Control flow graph reconstruction for EVM Bytecode](https://hackmd.io/@FranckC/rJIRA43Na) and [EtherSolve](https://arxiv.org/abs/2103.09113)

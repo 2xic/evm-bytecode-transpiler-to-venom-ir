@@ -1,7 +1,7 @@
 from test_utils.solc_compiler import SolcCompiler, CompilerSettings
 from bytecode_transpiler.transpiler import get_ssa_program
 from bytecode_transpiler.vyper_compiler import compile_venom
-from test_utils.evm import execute_function
+from test_utils.evm import get_function_output
 from test_utils.abi import encode_function_call
 from evals.eval import run_eval
 from bytecode_transpiler.symbolic import EVM
@@ -27,8 +27,8 @@ solc_versions = [
 
 
 def execute_evm(bytecode_a, bytecode_b, function):
-	out_a = execute_function(bytecode_a, function)
-	out_b = execute_function(bytecode_b, function)
+	out_a = get_function_output(bytecode_a, function)
+	out_b = get_function_output(bytecode_b, function)
 	assert out_a == out_b, f"{out_a} != {out_b} with {function.hex()}"
 	return True
 
@@ -800,6 +800,215 @@ def test_simple_double_mapping():
 	)
 
 
+@pytest.mark.skip("Fails to resolves")
+def test_vault_contract():
+	# https://solidity-by-example.org/defi/vault/
+	bytecode = SolcCompiler().compile(
+		"""
+			contract Vault {
+				IERC20 public immutable token;
+
+				uint256 public totalSupply;
+				mapping(address => uint256) public balanceOf;
+
+				constructor(address _token) {
+					token = IERC20(_token);
+				}
+
+				function _mint(address _to, uint256 _shares) private {
+					totalSupply += _shares;
+					balanceOf[_to] += _shares;
+				}
+
+				function _burn(address _from, uint256 _shares) private {
+					totalSupply -= _shares;
+					balanceOf[_from] -= _shares;
+				}
+
+				function deposit(uint256 _amount) external {
+					/*
+					a = amount
+					B = balance of token before deposit
+					T = total supply
+					s = shares to mint
+
+					(T + s) / T = (a + B) / B 
+
+					s = aT / B
+					*/
+					uint256 shares;
+					if (totalSupply == 0) {
+						shares = _amount;
+					} else {
+						shares = (_amount * totalSupply) / token.balanceOf(address(this));
+					}
+
+					_mint(msg.sender, shares);
+					token.transferFrom(msg.sender, address(this), _amount);
+				}
+
+				function withdraw(uint256 _shares) external {
+					/*
+					a = amount
+					B = balance of token before withdraw
+					T = total supply
+					s = shares to burn
+
+					(T - s) / T = (B - a) / B 
+
+					a = sB / T
+					*/
+					uint256 amount =
+						(_shares * token.balanceOf(address(this))) / totalSupply;
+					_burn(msg.sender, _shares);
+					token.transfer(msg.sender, amount);
+				}
+			}
+
+			interface IERC20 {
+				function totalSupply() external view returns (uint256);
+
+				function balanceOf(address account) external view returns (uint256);
+
+				function transfer(address recipient, uint256 amount)
+					external
+					returns (bool);
+
+				function allowance(address owner, address spender)
+					external
+					view
+					returns (uint256);
+
+				function approve(address spender, uint256 amount) external returns (bool);
+
+				function transferFrom(address sender, address recipient, uint256 amount)
+					external
+					returns (bool);
+
+				event Transfer(address indexed from, address indexed to, uint256 amount);
+				event Approval(
+					address indexed owner, address indexed spender, uint256 amount
+				);
+			}
+
+		"""
+	)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks is False
+
+
+# From https://x.com/harkal/status/1905303565188342004/photo/2
+array_test_code = """
+			contract ArrayTest {
+				function testArray(
+					int128 x,
+					int128 y,
+					int128 z,
+					int128 w,
+					int128 v,
+					int128 u,
+					int128 t,
+					int128 s
+				) external pure returns (int128) {
+					int128[2][2][2][2][2][2][2] memory a;
+
+					a[0][0][0][0][0][0][0] = x;
+					a[0][0][0][0][0][0][1] = y;
+					a[0][0][0][0][0][1][0] = z;
+					a[0][0][0][0][0][1][1] = w;
+					a[0][0][0][0][1][0][0] = v;
+					a[0][0][0][0][1][0][1] = u;
+					a[0][0][0][0][1][1][0] = t;
+					a[0][0][0][0][1][1][1] = s;
+					a[0][0][0][1][0][0][0] = -x;
+					a[0][0][0][1][0][0][1] = -y;
+					a[0][0][0][1][0][1][0] = -z;
+					a[0][0][0][1][0][1][1] = -w;
+					a[0][0][0][1][1][0][0] = -v;
+					a[0][0][0][1][1][0][1] = -u;
+					a[0][0][0][1][1][1][0] = -t;
+					a[0][0][0][1][1][1][1] = -s;
+
+					a[1][0][0][0][0][0][0] = x + 1;
+					a[1][0][0][0][0][0][1] = y + 1;
+					a[1][0][0][0][0][1][0] = z + 1;
+					a[1][0][0][0][0][1][1] = w + 1;
+					a[1][0][0][0][1][0][0] = v + 1;
+					a[1][0][0][0][1][0][1] = u + 1;
+					a[1][0][0][0][1][1][0] = t + 1;
+					a[1][0][0][0][1][1][1] = s + 1;
+					a[1][0][0][1][0][0][0] = -(x + 1);
+					a[1][0][0][1][0][0][1] = -(y + 1);
+					a[1][0][0][1][0][1][0] = -(z + 1);
+					a[1][0][0][1][0][1][1] = -(w + 1);
+					a[1][0][0][1][1][0][0] = -(v + 1);
+					a[1][0][0][1][1][0][1] = -(u + 1);
+					a[1][0][0][1][1][1][0] = -(t + 1);
+					a[1][0][0][1][1][1][1] = -(s + 1);
+
+					a[0][0][1][0][0][0][0] = 1;
+					a[0][0][1][0][0][0][1] = 2;
+					a[0][0][1][0][0][1][0] = 3;
+					a[0][0][1][0][0][1][1] = 4;
+					a[0][0][1][0][1][0][0] = 5;
+					a[0][0][1][0][1][0][1] = 6;
+					a[0][0][1][0][1][1][0] = 7;
+					a[0][0][1][0][1][1][1] = 8;
+					a[0][0][1][1][0][0][0] = 9;
+					a[0][0][1][1][0][0][1] = 10;
+					a[0][0][1][1][0][1][0] = 11;
+					a[0][0][1][1][0][1][1] = 12;
+					a[0][0][1][1][1][0][0] = 13;
+					a[0][0][1][1][1][0][1] = 14;
+					a[0][0][1][1][1][1][0] = 15;
+					a[0][0][1][1][1][1][1] = 16;
+					a[0][1][0][0][0][0][0] = 17;
+					a[0][1][0][0][0][0][1] = 18;
+					a[0][1][0][0][0][1][0] = 19;
+					a[0][1][0][0][0][1][1] = 20;
+
+					return
+						a[0][0][0][0][0][0][0] *
+						10000000 +
+						a[0][0][0][0][0][0][1] *
+						1000000 +
+						a[0][0][0][0][0][1][0] *
+						100000 +
+						a[0][0][0][0][0][1][1] *
+						10000 +
+						a[0][0][0][0][1][0][0] *
+						1000 +
+						a[0][0][0][0][1][0][1] *
+						100 +
+						a[0][0][0][0][1][1][0] *
+						10 +
+						a[0][0][0][0][1][1][1];
+				}
+			}
+		"""
+
+
+def test_array_test():
+	bytecode = SolcCompiler().compile(array_test_code)
+	output = get_ssa_program(bytecode)
+	output.process()
+	assert output.has_unresolved_blocks is False
+
+
+@pytest.mark.skip("Fails to compile")
+def test_array_test_compile():
+	bytecode = SolcCompiler().compile(array_test_code)
+	output = get_ssa_program(bytecode)
+	output.process()
+	transpiled = compile_venom(output.convert_into_vyper_ir())
+	assert execute_evm(
+		bytecode,
+		transpiled,
+		encode_function_call("getMIgrationAmount(uint256)", ["uint256"], [64]),
+	)
+
+
 def test_invalid_opcode():
 	# Invalid opcodes are not considered terminating in Vyper.
 	# So we should replace them with revert or something.
@@ -849,7 +1058,7 @@ def test_raw_bytecode():
 
 # Sanity check that the eval script should still work
 def test_eval():
-	run_eval()
+	run_eval(plot=False)
 
 
 def test_stack_evm():

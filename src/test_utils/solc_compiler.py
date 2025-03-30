@@ -9,7 +9,7 @@ class CompilerSettings:
 	optimization_runs: int = 200
 	deduplicate: bool = False
 	evm_version: str = None
-	solc_version: str = "0.8.26"
+	solc_version: str = "0.8.28"
 
 	def optimize(self, optimization_runs=200, via_ir=True):
 		self.via_ir = via_ir

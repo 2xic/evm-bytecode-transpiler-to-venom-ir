@@ -1,10 +1,14 @@
+# Python related
 __pycache__
-debug.venom
+*.pyc
+*.egg-info
+
+# Testing related
 *.vy
 *.sol
 output
+debug.venom
 .cache
-*.egg-info
 
 # Eval for https://huggingface.co/datasets/Zellic/smart-contract-fiesta
 fiesta.py

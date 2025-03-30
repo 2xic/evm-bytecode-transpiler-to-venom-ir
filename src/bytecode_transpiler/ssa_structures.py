@@ -266,34 +266,40 @@ def insert_variable(block: "SsaBlock", var: str):
 
 
 class PhiBlockResolver:
-	def __init__(self, blocks: Dict[str, "SsaProgram"], phi_counter: "PhiCounter"):
+	def __init__(
+		self,
+		blocks: Dict[str, "SsaProgram"],
+		phi_counter: "PhiCounter",
+		program_trace: ProgramTrace,
+	):
 		self.blocks = blocks
 		self.phi_counter = phi_counter
+		self.program_trace = program_trace
 
 	def handle_resolve_arguments(
 		self,
-		i: Opcode,
-		block: "SsaBlock",
+		op: Opcode,
+		current_block: "SsaBlock",
 	):
-		instruction_args = i.instruction.arguments
+		instruction_args = op.instruction.arguments
 		resolved_arguments = []
-		for argument in range((i.instruction.arg_count)):
+		for argument in range((op.instruction.arg_count)):
 			phi_functions = self._resolve_phi_functions(
 				instruction_args,
 				argument,
-				block,
+				current_block,
 			)
 
 			if phi_functions.can_skip:
 				resolved_arguments.append(phi_functions.edge[0].value)
 			else:
 				phi_value = self.phi_counter.increment()
-				block.preceding_opcodes.append(
+				current_block.preceding_opcodes.append(
 					construct_phi_function(phi_functions, phi_value)
 				)
 				resolved_arguments.append(VyperPhiRef(ref=phi_value))
 
-				if i.instruction.name == JUMP_OPCODE:
+				if op.instruction.name == JUMP_OPCODE:
 					resolved_arguments += [
 						VyperBlock(v.values[argument].id.value)
 						for v in instruction_args
@@ -412,8 +418,13 @@ class SsaBlock:
 			and self.opcodes[-1].instruction.name != "INVALID"
 		)
 
-	def resolve_arguments(self, blocks: Dict[str, "SsaBlock"], phi_counter: PhiCounter):
-		resolver = PhiBlockResolver(blocks, phi_counter)
+	def resolve_arguments(
+		self,
+		blocks: Dict[str, "SsaBlock"],
+		phi_counter: PhiCounter,
+		program_trace: ProgramTrace,
+	):
+		resolver = PhiBlockResolver(blocks, phi_counter, program_trace)
 		for opcode in list(self.opcodes):
 			# Simplest case, there has only been seen one variable used
 			if len(opcode.instruction.arguments) == 1:
@@ -425,11 +436,12 @@ class SsaBlock:
 			# We have seen multiple variables used and need to create a phi node.
 			elif len(opcode.instruction.arguments) > 1:
 				has_unique_parents = check_unique_parents(opcode)
+				is_jump = opcode.instruction.name == JUMP_OPCODE
 
 				if has_unique_parents and len(self.incoming) > 1:
 					resolved_arguments = resolver.handle_resolve_arguments(
 						opcode,
-						block=self,
+						current_block=self,
 					)
 					opcode.instruction.resolved_arguments = create_resolved_arguments(
 						resolved_arguments
@@ -438,13 +450,18 @@ class SsaBlock:
 					prev = find_relevant_split_node(
 						opcode.instruction.arguments,
 						blocks,
-						is_jump=(opcode.instruction.name == JUMP_OPCODE),
+						is_jump=is_jump,
 					)
-
+					if is_jump:
+						print(
+							"Needed a phi function ?",
+							len(program_trace.block_traces(self.id)),
+							hex(self.id),
+						)
 					if prev is not None:
 						resolved_arguments = resolver.handle_resolve_arguments(
 							opcode,
-							block=blocks[prev],
+							current_block=blocks[prev],
 						)
 						opcode.instruction.resolved_arguments = (
 							create_resolved_arguments(resolved_arguments)
@@ -501,6 +518,8 @@ class SsaBlock:
 	def remove_redundant_djmp_entries(
 		self, lookup: Dict[int, "SsaBlock"], program_trace: ProgramTrace
 	):
+		# TODO: This can be improved by looking at the history of the calls.
+		# 		If the basic block has already been visited then it will have it's value registered.
 		if (
 			len(self.opcodes) == 1
 			and self.opcodes[-1].instruction.name == JUMP_OPCODE
@@ -597,12 +616,30 @@ class SsaBlock:
 						if stop:
 							break
 
-					# print(trace)
-					# print(
-					# hex(self.id),
-					# hex(self.outgoing[0]),
-					# "This is a jump involving a phi function, maybe we can optimize?",
-					# )
+	def optimize_direct_path(self):
+		"""
+		Sometimes you will have code that does
+		1. Create a phi node in an earlier block.
+		2. Jumps into a shared block.
+		3. Now the created phi node can't be determined and results in var not defined errors.
+
+		One solutions to that is
+		1. Follow each block after you have defined a phi node.
+		2. Check if the variable placement will be ambagious
+		3. Check if you can extract the node path to be unambiguous
+			- Usually solc will make some of the blocks shared, but you can know the direct path from the trace.
+			- We can check this by looking at the program trace
+		4. If it is possible to make it unambiguous then we can insert some blocks for doing that.
+
+
+		Algorithm will then be something like:
+		1. Check if there is a phi node that is a dynamic jump.
+		2. If it is then follow it and see if there is an ambiguous path
+			- The phi node is not used and we are at a node with additional parents.
+		3. If that is true, then we check if there is need for our node to go to that joined node or if it can be skipped.
+			- We can check this by following the trace from the node, if we can copy over path of the assignments to a new block
+			- Then skip the node which joins in the join point.
+		"""
 
 	def debug_log_unresolved_arguments(self):
 		unresolved = []
@@ -638,7 +675,7 @@ class SsaProgram:
 		lookup = {block.id: block for block in self.blocks}
 		for block in self.blocks:
 			block.remove_irrelevant_opcodes()
-			block.resolve_arguments(lookup, self.phi_counter)
+			block.resolve_arguments(lookup, self.phi_counter, self.program_trace)
 		# Cleanup / Optimize
 		for block in self.blocks:
 			if block.resolve_phi_jump_blocks(lookup):

@@ -372,6 +372,7 @@ def transpile_from_bytecode(
 	optimization_strategy=DEFAULT_OPTIMIZATION_LEVEL,
 	generate_output=False,
 	debug=False,
+	stats=False,
 ):
 	dot = graphviz.Digraph(comment="cfg", format="png")
 	output = get_ssa_program(bytecode)
@@ -402,9 +403,14 @@ def transpile_from_bytecode(
 		with open("output/generated.venom", "w") as file:
 			file.write(output.convert_into_vyper_ir(strict=False))
 
-	return compile_venom(
+	results = compile_venom(
 		output.convert_into_vyper_ir(strict=False), optimization_strategy
 	)
+	if stats:
+		delta = (len(bytecode) - len(results)) / len(bytecode) * 100
+		print(f"Bytecode size saved {delta}")
+
+	return results
 
 
 def main():
@@ -431,6 +437,12 @@ def main():
 		default=False,
 		action="store_true",
 		help="Debug mode",
+	)
+	parser.add_argument(
+		"--stats",
+		default=False,
+		action="store_true",
+		help="Print stats",
 	)
 	parser.add_argument(
 		"--optimizer",
@@ -465,7 +477,11 @@ def main():
 		bytecode = bytes.fromhex(args.bytecode.replace("0x", ""))
 		print(
 			transpile_from_bytecode(
-				bytecode, optimization_strategy, generate_output=True, debug=args.debug
+				bytecode,
+				optimization_strategy,
+				generate_output=True,
+				debug=args.debug,
+				stats=args.stats,
 			).hex()
 		)
 
