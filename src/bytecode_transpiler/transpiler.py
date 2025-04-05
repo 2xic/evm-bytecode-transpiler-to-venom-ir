@@ -32,6 +32,7 @@ from bytecode_transpiler.ssa_structures import (
 	Block,
 	Instruction,
 	create_opcode,
+	SsaProgrammingProcessOption,
 )
 from ordered_set import OrderedSet
 from copy import deepcopy
@@ -63,7 +64,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 
 	blocks: List[
 		tuple[BasicBlock, EVM, Optional[SsaBlock], List[int], ExecutionTrace]
-	] = [(blocks_lookup[0], EVM(pc=0), None, [], program_trace.create())]
+	] = [(blocks_lookup[0], EVM(pc=0), None, [], program_trace.fork(None))]
 
 	while len(blocks) > 0:
 		(block, evm, parent, traces, execution_trace) = blocks.pop(0)
@@ -82,7 +83,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 		if parent is not None:
 			ssa_block.incoming.add(parent.id)
 
-		execution_trace.blocks.append(block.id)
+		execution_trace.blocks.append(ssa_block.id)
 
 		# Do the opcode execution
 		for index, opcode in enumerate(block.opcodes):
@@ -206,7 +207,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 							evm.clone(),
 							ssa_block,
 							create_new_traces(parent_id, traces),
-							program_trace.fork(),
+							program_trace.fork(execution_trace),
 						)
 					)
 					ssa_block.outgoing.add(next_offset_value)
@@ -350,7 +351,7 @@ def transpile_from_single_solidity_file(
 	via_ir,
 	optimization_strategy,
 	generate_output,
-	debug=False,
+	experimental=False,
 ):
 	optimization_settings = (
 		CompilerSettings().optimize(optimization_runs=2**31 - 1)
@@ -361,9 +362,9 @@ def transpile_from_single_solidity_file(
 	with open(filepath, "r") as file:
 		code = file.read()
 		bytecode = SolcCompiler().compile(code, settings=optimization_settings)
-		print(f"Solc: {bytecode.hex()}")
+		print(f"Solc{optimization_settings.solc_version}: {bytecode.hex()}")
 		return transpile_from_bytecode(
-			bytecode, optimization_strategy, generate_output, debug
+			bytecode, optimization_strategy, generate_output, experimental
 		)
 
 
@@ -371,12 +372,16 @@ def transpile_from_bytecode(
 	bytecode,
 	optimization_strategy=DEFAULT_OPTIMIZATION_LEVEL,
 	generate_output=False,
-	debug=False,
+	experimental=False,
 	stats=False,
 ):
 	dot = graphviz.Digraph(comment="cfg", format="png")
 	output = get_ssa_program(bytecode)
-	output.process()
+	output.process(
+		SsaProgrammingProcessOption(
+			experimental_resolve_ambiguous_variables=experimental,
+		)
+	)
 	for ssa_block in output.blocks:
 		block = []
 		for opcode in ssa_block.preceding_opcodes:
@@ -433,10 +438,10 @@ def main():
 		help="Compile the Solidity file with via-ir",
 	)
 	parser.add_argument(
-		"--debug",
+		"--experimental",
 		default=False,
 		action="store_true",
-		help="Debug mode",
+		help="experimental mode",
 	)
 	parser.add_argument(
 		"--stats",
@@ -470,7 +475,7 @@ def main():
 				args.via_ir,
 				optimization_strategy,
 				generate_output=True,
-				debug=args.debug,
+				experimental=args.experimental,
 			).hex()
 		)
 	elif args.bytecode:
@@ -480,7 +485,7 @@ def main():
 				bytecode,
 				optimization_strategy,
 				generate_output=True,
-				debug=args.debug,
+				experimental=args.experimental,
 				stats=args.stats,
 			).hex()
 		)

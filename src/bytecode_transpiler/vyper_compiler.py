@@ -6,7 +6,7 @@ from vyper.venom.parser import parse_venom
 
 GAS_OPTIMIZATION_LEVEL = OptimizationLevel.GAS
 CODE_OPTIMIZATION_LEVEL = OptimizationLevel.CODESIZE
-DEFAULT_OPTIMIZATION_LEVEL = OptimizationLevel.default
+DEFAULT_OPTIMIZATION_LEVEL = OptimizationLevel.default()
 NO_OPTIMIZATION = OptimizationLevel.NONE
 
 

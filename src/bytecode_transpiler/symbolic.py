@@ -3,7 +3,7 @@ We need a small symbolic EVM to be able to handle the lookups
 """
 
 from copy import deepcopy
-from typing import List
+from typing import List, Optional
 
 """
 TODO: This should replace the existing traces type
@@ -21,27 +21,23 @@ class ExecutionTrace:
 		return self.__str__()
 
 
-# For each
 class ProgramTrace:
 	def __init__(self):
-		self.execution = ExecutionTrace()
 		self.traces: List[ExecutionTrace] = []
 
-	def block_traces(self, block_id) -> List[ExecutionTrace]:
+	def get_block_traces(self, block_id) -> List[ExecutionTrace]:
 		traces: List[ExecutionTrace] = []
 		for i in self.traces:
 			if block_id in i.blocks:
 				traces.append(i)
 		return traces
 
-	def fork(self):
+	def fork(self, current: Optional[ExecutionTrace]):
 		# Each time there is a conditional block we need to fork the trace.
-		self.traces.append(self.execution)
-		self.execution = ExecutionTrace(deepcopy(self.execution.blocks))
-		return self.execution
-
-	def create(self):
-		return self.execution
+		self.traces.append(
+			ExecutionTrace(deepcopy(current.blocks) if current is not None else [])
+		)
+		return self.traces[-1]
 
 
 class SymbolicValue:

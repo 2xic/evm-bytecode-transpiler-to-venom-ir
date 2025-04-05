@@ -55,3 +55,4 @@ There is a simple bash script in the root of this repo that can be used to view 
 - [Venom IR readme](https://github.com/vyperlang/vyper/blob/master/vyper/venom/README.md)
 - [Presetnation on Rattle](https://www.trailofbits.com/documents/RattleRecon.pdf) which converts bytecode into SSA form. Some ideas are applicable here. It's built on top of this [paper](https://c9x.me/compile/bib/braun13cc.pdf) which I should take more ideas from.
 - [Control flow graph reconstruction for EVM Bytecode](https://hackmd.io/@FranckC/rJIRA43Na) and [EtherSolve](https://arxiv.org/abs/2103.09113)
+- [Deadpub decompiler](https://app.dedaub.com/decompile) for sanity checking outputs.

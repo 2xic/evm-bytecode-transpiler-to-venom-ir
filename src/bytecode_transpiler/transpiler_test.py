@@ -1,6 +1,7 @@
 from test_utils.solc_compiler import SolcCompiler, CompilerSettings
 from bytecode_transpiler.transpiler import get_ssa_program
 from bytecode_transpiler.vyper_compiler import compile_venom
+from bytecode_transpiler.ssa_structures import SsaProgrammingProcessOption
 from test_utils.evm import get_function_output
 from test_utils.abi import encode_function_call
 from evals.eval import run_eval
@@ -758,11 +759,14 @@ def test_should_handle_sstore():
 	assert output.has_unresolved_blocks is False
 
 
-@pytest.mark.skip("Currently fails to compile")
 def test_should_handle_sstore_compile():
 	bytecode = SolcCompiler().compile(simple_sstore_code)
 	output = get_ssa_program(bytecode)
-	output.process()
+	output.process(
+		SsaProgrammingProcessOption(
+			experimental_resolve_ambiguous_variables=True,
+		)
+	)
 	assert output.has_unresolved_blocks is False
 
 	transpiled = compile_venom(output.convert_into_vyper_ir())
