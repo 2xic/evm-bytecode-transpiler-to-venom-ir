@@ -16,7 +16,6 @@ from bytecode_transpiler.ssa_basic_blocks import (
 	PhiEdge,
 	PhiFunction,
 )
-from copy import deepcopy
 
 IRRELEVANT_SSA_OPCODES = ["JUMPDEST", "SWAP", "DUP", "JUMPDEST", "POP", "PUSH"]
 JUMP_OPCODE = "JUMP"
@@ -29,8 +28,10 @@ def mapper(x):
 		return "%" + str(x.id)
 	elif isinstance(x, Block):
 		return str(x)
+	elif isinstance(x, PhiEdge):
+		return str(x)
 	else:
-		raise Exception(f"Unknown {x}")
+		raise Exception(f"Unknown {x} {type(x)}")
 
 
 @dataclass
@@ -148,6 +149,15 @@ def has_preceding_instr(block: "SsaBlock", new_var):
 		if op.instruction.name == new_var:
 			return True
 	return False
+
+
+def has_preceding_phi_instr(block: "SsaBlock", new_var: PhiInstruction):
+	for op in block.preceding_opcodes:
+		instr = op.instruction
+		if isinstance(instr, PhiInstruction):
+			if str(instr.resolved_arguments) == str(new_var.resolved_arguments):
+				return op.variable_name
+	return None
 
 
 def create_opcode(
@@ -304,11 +314,21 @@ class PhiBlockResolver:
 			if phi_functions.can_skip:
 				resolved_arguments.append(phi_functions.edge[0].value)
 			else:
+				old_phi_value = self.phi_counter.value
 				phi_value = self.phi_counter.increment()
 				phi_func = construct_phi_function(phi_functions, phi_value)
-				parent_block.preceding_opcodes.append(phi_func)
-				self.add_phi_block_usage(phi_func.variable_name, current_block.id)
-				resolved_arguments.append(VyperPhiRef(ref=phi_value))
+				# Don't create a new variable unless it's needed
+				# TODO: also add a test for this case.
+				phi_func_exists = has_preceding_phi_instr(
+					parent_block, phi_func.instruction
+				)
+				if phi_func_exists is not None:
+					resolved_arguments.append(VyperVarRef(ref=phi_func_exists))
+					self.phi_counter.value = old_phi_value
+				else:
+					parent_block.preceding_opcodes.append(phi_func)
+					self.add_phi_block_usage(phi_func.variable_name, current_block.id)
+					resolved_arguments.append(VyperPhiRef(ref=phi_value))
 
 				if op.instruction.name == JUMP_OPCODE:
 					resolved_arguments += [

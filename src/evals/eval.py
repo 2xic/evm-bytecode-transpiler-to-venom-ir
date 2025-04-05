@@ -9,6 +9,12 @@ import matplotlib.pyplot as plt
 from test_utils.abi import encode_function_call
 from test_utils.evm import get_function_gas_usage
 
+import matplotlib
+
+matplotlib.use("Agg")
+plt.rcParams["font.family"] = "DejaVu Sans"
+plt.rcParams["font.size"] = 12
+
 
 @dataclass
 class FunctionCall:
@@ -379,6 +385,7 @@ def run_eval(plot):
 	if plot:
 		plot_bytecode_size(bytecode_sizes)
 		plot_gas_usage(gas_usage)
+		print("Saved plots")
 
 
 if __name__ == "__main__":

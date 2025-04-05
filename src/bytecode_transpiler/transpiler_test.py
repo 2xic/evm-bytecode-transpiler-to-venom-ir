@@ -157,21 +157,21 @@ def test_should_handle_phi_djmps():
 
 
 balance_delta_code = """
-		contract BalanceCallS {
-			function getEthBalances(
-				address[] memory addr
-			) public view returns (uint256[] memory balance) {
-				balance = new uint256[](addr.length);
-				for (uint256 i = 0; i < addr.length; i++) {
-					balance[i] = getEthBalance(addr[i]);
-				}
-				return balance;
+	contract BalanceCallS {
+		function getEthBalances(
+			address[] memory addr
+		) public view returns (uint256[] memory balance) {
+			balance = new uint256[](addr.length);
+			for (uint256 i = 0; i < addr.length; i++) {
+				balance[i] = getEthBalance(addr[i]);
 			}
-
-			function getEthBalance(address addr) public view returns (uint256 balance) {
-				balance = addr.balance;
-			}
+			return balance;
 		}
+
+		function getEthBalance(address addr) public view returns (uint256 balance) {
+			balance = addr.balance;
+		}
+	}
 	"""
 
 
@@ -1043,21 +1043,24 @@ def test_transpile_minimal_proxy_from_bytecode():
 		assert transpiled is not None
 
 
-def test_raw_bytecode():
-	for i in [
-		REGISTRY,
-		ERC4626_RRATE_PROVIDER,
-		ERC721_DROP,
-		SINGLE_BLOCK,
-		PC_INVALID_JUMP,
-		GLOBAL_JUMP,
-		INLINE_CALLS,
-	]:
-		output = get_ssa_program(i)
-		output.process()
-		assert output.has_unresolved_blocks is False
-		transpiled = compile_venom(output.convert_into_vyper_ir())
-		assert transpiled is not None
+@pytest.mark.parametrize(
+	"raw_bytecode",
+	[
+		REGISTRY.hex(),
+		ERC4626_RRATE_PROVIDER.hex(),
+		ERC721_DROP.hex(),
+		SINGLE_BLOCK.hex(),
+		# PC_INVALID_JUMP.hex(),
+		GLOBAL_JUMP.hex(),
+		INLINE_CALLS.hex(),
+	],
+)
+def test_raw_bytecode(raw_bytecode):
+	output = get_ssa_program(bytes.fromhex(raw_bytecode))
+	output.process()
+	assert output.has_unresolved_blocks is False
+	transpiled = compile_venom(output.convert_into_vyper_ir())
+	assert transpiled is not None
 
 
 # Sanity check that the eval script should still work

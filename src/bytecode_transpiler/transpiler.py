@@ -375,7 +375,8 @@ def transpile_from_bytecode(
 	experimental=False,
 	stats=False,
 ):
-	dot = graphviz.Digraph(comment="cfg", format="png")
+	# PDF is nicer as you can more easily search around when debugging
+	dot = graphviz.Digraph(comment="cfg", format="pdf")
 	output = get_ssa_program(bytecode)
 	output.process(
 		SsaProgrammingProcessOption(
