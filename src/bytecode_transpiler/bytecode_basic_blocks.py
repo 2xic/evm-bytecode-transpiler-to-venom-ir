@@ -26,7 +26,7 @@ class BasicBlock:
 		return self.opcodes[0].pc
 
 
-def get_basic_blocks(opcodes) -> List[BasicBlock]:
+def get_basic_blocks(opcodes: List[Opcode]) -> List[BasicBlock]:
 	blocks = []
 	current_block = BasicBlock(opcodes=[])
 	for _, i in enumerate(opcodes):

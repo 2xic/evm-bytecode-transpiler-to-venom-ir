@@ -544,6 +544,7 @@ def test_loop():
 	bytecode = SolcCompiler().compile(code, CompilerSettings())
 	output = get_ssa_program(bytecode)
 	output.process()
+	assert len(output.phi_block_resolver.phi_block_usage) == 2
 	assert output.has_unresolved_blocks is False
 	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
@@ -604,6 +605,7 @@ def test_counter():
 	bytecode = SolcCompiler().compile(code, CompilerSettings())
 	output = get_ssa_program(bytecode)
 	output.process()
+	assert len(output.phi_block_resolver.phi_block_usage) == 4
 	assert output.has_unresolved_blocks is False
 	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
@@ -727,6 +729,7 @@ def test_should_handle_sstore_optimized():
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks is False
+	assert len(output.phi_block_resolver.phi_block_usage) == 1
 	transpiled = compile_venom(output.convert_into_vyper_ir())
 	assert execute_evm(
 		bytecode,
@@ -1034,15 +1037,6 @@ def test_transpile_multicall_from_bytecode():
 	assert output.has_unresolved_blocks is True
 
 
-def test_transpile_minimal_proxy_from_bytecode():
-	for i in [MINIMAL_PROXY, MINIMAL_PROXY_2]:
-		output = get_ssa_program(i)
-		output.process()
-		assert output.has_unresolved_blocks is False
-		transpiled = compile_venom(output.convert_into_vyper_ir())
-		assert transpiled is not None
-
-
 @pytest.mark.parametrize(
 	"raw_bytecode",
 	[
@@ -1053,6 +1047,8 @@ def test_transpile_minimal_proxy_from_bytecode():
 		# PC_INVALID_JUMP.hex(),
 		GLOBAL_JUMP.hex(),
 		INLINE_CALLS.hex(),
+		MINIMAL_PROXY.hex(),
+		MINIMAL_PROXY_2.hex(),
 	],
 )
 def test_raw_bytecode(raw_bytecode):

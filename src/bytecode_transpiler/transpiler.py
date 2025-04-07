@@ -31,7 +31,6 @@ from bytecode_transpiler.ssa_structures import (
 	Arguments,
 	Block,
 	Instruction,
-	create_opcode,
 	SsaProgrammingProcessOption,
 )
 from ordered_set import OrderedSet
@@ -53,6 +52,7 @@ def create_new_traces(parent, traces):
 	] + deepcopy(traces)
 
 
+# TODO: instead of returning a SSAProgram, we probably want to return a program execution which is converted into a SSAProgram
 def get_ssa_program(bytecode) -> SsaProgram:
 	basic_blocks = get_basic_blocks(get_opcodes_from_bytes(bytecode))
 	blocks_lookup: Dict[str, BasicBlock] = {block.id: block for block in basic_blocks}
@@ -216,7 +216,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					converted_blocks[next_offset_value] = SsaBlock(
 						id=next_offset_value,
 						preceding_opcodes=[],
-						opcodes=[create_opcode("revert 0, 0")],
+						opcodes=[Opcode.create_opcode("revert 0, 0")],
 						incoming=OrderedSet([]),
 						outgoing=OrderedSet([]),
 					)

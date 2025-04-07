@@ -52,6 +52,10 @@ class Arguments:
 	def arg_count(self):
 		return len(self.values)
 
+	@classmethod
+	def create_resolved_arguments(self, values):
+		return Arguments(values=values, parent_block_id=None, traces=[])
+
 
 @dataclass
 class Instruction:
@@ -65,10 +69,16 @@ class Instruction:
 	def arg_count(self):
 		return len(self.arguments[0].values)
 
+	def __eq__(self, value: "Instruction"):
+		return isinstance(value, Instruction) and str(value.name) == str(self.name)
+
 
 @dataclass
 class PhiInstruction(Instruction):
-	pass
+	def __eq__(self, value):
+		return isinstance(value, PhiInstruction) and str(
+			value.resolved_arguments
+		) == str(self.resolved_arguments)
 
 
 @dataclass
@@ -76,11 +86,14 @@ class Opcode:
 	instruction: Instruction
 	variable_name: Optional[int] = None
 
+	def get_unknown_args(self):
+		return [
+			"?",
+		] * self.instruction.arg_count
+
 	def get_arguments(self):
 		if self.instruction.resolved_arguments is None:
-			return [
-				"?",
-			] * self.instruction.arg_count
+			return self.get_unknown_args()
 		return list(map(str, self.instruction.resolved_arguments.values))
 
 	def __str__(self):
@@ -92,7 +105,7 @@ class Opcode:
 			ids = ", ".join(map(str, resolved_args.values))
 		elif len(args) > 0:
 			# if unresolved, just mark it as question mark
-			ids = ", ".join(["?" for _ in range(args[0].arg_count())])
+			ids = ", ".join(self.get_unknown_args())
 
 		return f"{prefix} {self.instruction.name.lower()} {ids}"
 
@@ -135,145 +148,43 @@ class Opcode:
 		else:
 			return str(self).strip()
 
+	@classmethod
+	def create_opcode(
+		self,
+		opcode: str,
+		resolved_arguments=Arguments(values=[], parent_block_id=None, traces=[]),
+		class_instr=Instruction,
+		variable_name=None,
+	):
+		return Opcode(
+			class_instr(
+				name=opcode,
+				arguments=OrderedSet([]),
+				resolved_arguments=resolved_arguments,
+			),
+			variable_name=variable_name,
+		)
 
-def create_resolved_arguments(resolved_arguments):
-	return Arguments(
-		values=resolved_arguments,
-		parent_block_id=None,
-		traces=[],
-	)
+	@classmethod
+	def create_phi_opcode(
+		self, phi_function_operands: PhiFunction, phi_functions_counter: int
+	):
+		return Opcode.create_opcode(
+			"phi",
+			variable_name=f"phi{phi_functions_counter}",
+			resolved_arguments=Arguments(
+				values=phi_function_operands.edge, parent_block_id=None, traces=[]
+			),
+			class_instr=PhiInstruction,
+		)
 
 
-def has_preceding_instr(block: "SsaBlock", new_var):
-	for op in block.preceding_opcodes:
-		if op.instruction.name == new_var:
-			return True
-	return False
-
-
-def has_preceding_phi_instr(block: "SsaBlock", new_var: PhiInstruction):
+def has_preceding_instr(block: "SsaBlock", new_var) -> Opcode:
 	for op in block.preceding_opcodes:
 		instr = op.instruction
-		if isinstance(instr, PhiInstruction):
-			if str(instr.resolved_arguments) == str(new_var.resolved_arguments):
-				return op.variable_name
+		if instr == new_var:
+			return op
 	return None
-
-
-def create_opcode(
-	opcode: str,
-	resolved_arguments=Arguments(values=[], parent_block_id=None, traces=[]),
-	class_instr=Instruction,
-	variable_name=None,
-):
-	return Opcode(
-		class_instr(
-			name=opcode,
-			arguments=OrderedSet([]),
-			resolved_arguments=resolved_arguments,
-		),
-		variable_name=variable_name,
-	)
-
-
-def construct_phi_function(phi_function_operands: PhiFunction, phi_functions_counter):
-	return create_opcode(
-		"phi",
-		variable_name=f"phi{phi_functions_counter}",
-		resolved_arguments=Arguments(
-			values=phi_function_operands.edge, parent_block_id=None, traces=[]
-		),
-		class_instr=PhiInstruction,
-	)
-
-
-def check_unique_parents(i: Opcode):
-	seen_parents = OrderedSet()
-	for entry in i.instruction.arguments:
-		if entry.parent_block_id in seen_parents:
-			return False
-		seen_parents.add(entry.parent_block_id)
-	return True
-
-
-# TODO: I want to replace this block with something easier to read
-def find_relevant_split_node(
-	arguments: OrderedSet[Arguments], blocks: Dict[int, "SsaBlock"], is_jump=None
-):
-	parent_block_ids = OrderedSet([])
-	# Find all shared nodes
-	entries = None
-	for i in arguments:
-		if entries is None:
-			entries = OrderedSet(i.traces)
-		else:
-			entries = entries.union(i.traces)
-		parent_block_ids.add(i.parent_block_id)
-
-	if (
-		is_jump
-		and len(parent_block_ids) == 1
-		and len(arguments) == len(blocks[parent_block_ids[0]].incoming)
-	):
-		return parent_block_ids[0]
-
-	if is_jump:
-		index = 0
-		prev = None
-		while True:
-			current = OrderedSet(
-				[
-					arg_trace.traces[index] if index < len(arg_trace.traces) else None
-					for arg_trace in arguments
-				]
-			)
-			if None in current:
-				break
-			elif len(current) == len(arguments):
-				return prev
-			prev = current[0]
-			index += 1
-	else:
-		for block_id in entries:
-			next_block = blocks[block_id]
-			if len(next_block.incoming) == len(arguments):
-				for i in arguments:
-					if block_id not in i.traces:
-						break
-				else:
-					return block_id
-
-	if len(parent_block_ids) == 1:
-		return parent_block_ids[0]
-	return None
-
-
-def find_relevant_parent(
-	var_block_id: int, blocks: Dict[str, "SsaBlock"], current_block: "SsaBlock"
-):
-	"""
-	1. Check if the variable is in the same bloc
-	2. Lookup the outgoing blocks from where variable was defined until an outgoing node is found that goes into the current lbock
-	"""
-	queue = [var_block_id]
-	if var_block_id == current_block.id:
-		return current_block.id
-	seen = set(queue)
-	while len(queue) > 0:
-		prev = queue.pop(0)
-		next_blocks = blocks[prev].outgoing
-		if prev in current_block.incoming:
-			return prev
-		for item in next_blocks:
-			if item not in seen:
-				queue.append(item)
-				seen.add(item)
-	return None
-
-
-def insert_variable(block: "SsaBlock", var: str):
-	if not has_preceding_instr(block, var):
-		block.preceding_opcodes.append(create_opcode(var))
 
 
 class PhiBlockResolver:
@@ -316,13 +227,14 @@ class PhiBlockResolver:
 			else:
 				old_phi_value = self.phi_counter.value
 				phi_value = self.phi_counter.increment()
-				phi_func = construct_phi_function(phi_functions, phi_value)
+				phi_func = Opcode.create_phi_opcode(phi_functions, phi_value)
 				# Don't create a new variable unless it's needed
 				# TODO: also add a test for this case.
-				phi_func_exists = has_preceding_phi_instr(
+				phi_func_exists = has_preceding_instr(
 					parent_block, phi_func.instruction
 				)
 				if phi_func_exists is not None:
+					phi_func_exists = phi_func_exists.variable_name
 					resolved_arguments.append(VyperVarRef(ref=phi_func_exists))
 					self.phi_counter.value = old_phi_value
 				else:
@@ -354,8 +266,8 @@ class PhiBlockResolver:
 				"""
 				var_name = VyperBlockRef(VyperBlock(var_value.id.value))
 				block_id = var_value.id.block
-				insert_variable(
-					all_block[block_id],
+				# TODO: Should not add variable values like this
+				all_block[block_id].add_preceding_opcode(
 					f"{var_name} = {var_value}",
 				)
 				phi_function.add_edge(
@@ -382,13 +294,12 @@ class PhiBlockResolver:
 								break
 
 					new_var = VyperVariable(VyperVarRef(var_value.id), var_value.value)
-					insert_variable(
-						all_block[block_id],
+					all_block[block_id].add_preceding_opcode(
 						str(new_var),
 					)
 					phi_function.add_edge(PhiEdge(block_id, new_var.id))
 			else:
-				parent_block_id = find_relevant_parent(
+				parent_block_id = self.find_relevant_parent(
 					var_value.block,
 					all_block,
 					current_block,
@@ -396,6 +307,31 @@ class PhiBlockResolver:
 				phi_function.add_edge(PhiEdge(parent_block_id, mapper(var_value)))
 
 		return phi_function
+
+	def find_relevant_parent(
+		self,
+		var_block_id: int,
+		blocks: Dict[str, "SsaBlock"],
+		current_block: "SsaBlock",
+	):
+		"""
+		1. Check if the variable is in the same bloc
+		2. Lookup the outgoing blocks from where variable was defined until an outgoing node is found that goes into the current lbock
+		"""
+		queue = [var_block_id]
+		if var_block_id == current_block.id:
+			return current_block.id
+		seen = set(queue)
+		while len(queue) > 0:
+			prev = queue.pop(0)
+			next_blocks = blocks[prev].outgoing
+			if prev in current_block.incoming:
+				return prev
+			for item in next_blocks:
+				if item not in seen:
+					queue.append(item)
+					seen.add(item)
+		return None
 
 
 @dataclass
@@ -414,21 +350,17 @@ class SsaBlock:
 			assert len(self.outgoing) == 1, len(self.outgoing)
 			next_block = self.outgoing[0]
 			self.opcodes.append(
-				Opcode(
-					Instruction(
-						name=JUMP_OPCODE,
-						arguments=OrderedSet([]),
-						resolved_arguments=Arguments(
-							values=[Block(ConstantValue(None, next_block, None))],
-							parent_block_id=None,
-							traces=[],
-						),
+				Opcode.create_opcode(
+					JUMP_OPCODE,
+					resolved_arguments=Arguments(
+						values=[Block(ConstantValue(None, next_block, None))],
+						parent_block_id=None,
+						traces=[],
 					),
-					variable_name=None,
 				)
 			)
 		elif not self.is_terminating:
-			self.opcodes.append(create_opcode("STOP"))
+			self.opcodes.append(Opcode.create_opcode("STOP"))
 
 		return self
 
@@ -450,6 +382,18 @@ class SsaBlock:
 			and self.opcodes[-1].instruction.name != "INVALID"
 		)
 
+	def add_preceding_opcode(self, var):
+		if has_preceding_instr(self, var) is None:
+			self.preceding_opcodes.append(Opcode.create_opcode(var))
+
+	def check_unique_parents(self, i: Opcode):
+		seen_parents = OrderedSet()
+		for entry in i.instruction.arguments:
+			if entry.parent_block_id in seen_parents:
+				return False
+			seen_parents.add(entry.parent_block_id)
+		return True
+
 	def resolve_arguments(
 		self,
 		blocks: Dict[str, "SsaBlock"],
@@ -467,7 +411,7 @@ class SsaBlock:
 				)
 			# We have seen multiple variables used and need to create a phi node.
 			elif len(opcode.instruction.arguments) > 1:
-				has_unique_parents = check_unique_parents(opcode)
+				has_unique_parents = self.check_unique_parents(opcode)
 				is_jump = opcode.instruction.name == JUMP_OPCODE
 
 				if has_unique_parents and len(self.incoming) > 1:
@@ -477,11 +421,11 @@ class SsaBlock:
 						current_block=self,
 						all_block=blocks,
 					)
-					opcode.instruction.resolved_arguments = create_resolved_arguments(
-						resolved_arguments
+					opcode.instruction.resolved_arguments = (
+						Arguments.create_resolved_arguments(resolved_arguments)
 					)
 				else:
-					prev = find_relevant_split_node(
+					prev = self.find_relevant_split_node(
 						opcode.instruction.arguments,
 						blocks,
 						is_jump=is_jump,
@@ -500,10 +444,66 @@ class SsaBlock:
 							all_block=blocks,
 						)
 						opcode.instruction.resolved_arguments = (
-							create_resolved_arguments(resolved_arguments)
+							Arguments.create_resolved_arguments(resolved_arguments)
 						)
 
 		return self
+
+	# TODO: I want to replace this block with something easier to read
+	def find_relevant_split_node(
+		self,
+		arguments: OrderedSet[Arguments],
+		blocks: Dict[int, "SsaBlock"],
+		is_jump=None,
+	):
+		parent_block_ids = OrderedSet([])
+		# Find all shared nodes
+		entries = None
+		for i in arguments:
+			if entries is None:
+				entries = OrderedSet(i.traces)
+			else:
+				entries = entries.union(i.traces)
+			parent_block_ids.add(i.parent_block_id)
+
+		if (
+			is_jump
+			and len(parent_block_ids) == 1
+			and len(arguments) == len(blocks[parent_block_ids[0]].incoming)
+		):
+			return parent_block_ids[0]
+
+		if is_jump:
+			index = 0
+			prev = None
+			while True:
+				current = OrderedSet(
+					[
+						arg_trace.traces[index]
+						if index < len(arg_trace.traces)
+						else None
+						for arg_trace in arguments
+					]
+				)
+				if None in current:
+					break
+				elif len(current) == len(arguments):
+					return prev
+				prev = current[0]
+				index += 1
+		else:
+			for block_id in entries:
+				next_block = blocks[block_id]
+				if len(next_block.incoming) == len(arguments):
+					for i in arguments:
+						if block_id not in i.traces:
+							break
+					else:
+						return block_id
+
+		if len(parent_block_ids) == 1:
+			return parent_block_ids[0]
+		return None
 
 	# TODO: rework this as it's way to hard to read what is happening here.
 	def resolve_phi_jump_blocks(self, lookup: Dict[int, "SsaBlock"]):
@@ -747,7 +747,7 @@ class SsaBlock:
 					for v in target_block.incoming:
 						if v not in references:
 							block[v].preceding_opcodes.append(
-								create_opcode(
+								Opcode.create_opcode(
 									"",
 									resolved_arguments=Arguments(
 										[VyperBlock(0xC)], None, []
@@ -768,7 +768,7 @@ class SsaBlock:
 				assert len(new_phi_edge) > 1
 				PHI_VAR_ID = phi_block_resolver.revert_block_id
 				target_block.preceding_opcodes.append(
-					construct_phi_function(
+					Opcode.create_phi_opcode(
 						PhiFunction(OrderedSet(new_phi_edge)), PHI_VAR_ID
 					)
 				)
