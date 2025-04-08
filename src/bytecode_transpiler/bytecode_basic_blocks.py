@@ -4,7 +4,7 @@ We need to convert the bytecode into basic blocks so that we can jump between th
 
 from dataclasses import dataclass
 from bytecode_transpiler.opcodes import Opcode
-from typing import List
+from typing import List, Optional
 
 END_OF_BLOCK_OPCODES = [
 	"JUMP",
@@ -20,6 +20,7 @@ START_OF_BLOCK_OPCODES = ["JUMPDEST"]
 @dataclass
 class BasicBlock:
 	opcodes: List[Opcode]
+	next: Optional[int]
 
 	@property
 	def id(self):
@@ -28,15 +29,16 @@ class BasicBlock:
 
 def get_basic_blocks(opcodes: List[Opcode]) -> List[BasicBlock]:
 	blocks = []
-	current_block = BasicBlock(opcodes=[])
+	current_block = BasicBlock(opcodes=[], next=None)
 	for _, i in enumerate(opcodes):
 		if i.name in END_OF_BLOCK_OPCODES:
 			current_block.opcodes.append(i)
 			blocks.append(current_block)
-			current_block = BasicBlock(opcodes=[])
+			current_block = BasicBlock(opcodes=[], next=None)
 		elif i.name in START_OF_BLOCK_OPCODES:
 			blocks.append(current_block)
-			current_block = BasicBlock(opcodes=[])
+			current_block.next = i.pc
+			current_block = BasicBlock(opcodes=[], next=None)
 			current_block.opcodes.append(i)
 		else:
 			current_block.opcodes.append(i)

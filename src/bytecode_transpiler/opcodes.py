@@ -9,6 +9,14 @@ class Opcode:
 	def is_constant_op(self):
 		return self.inputs == 0
 
+	@property
+	def is_push_opcode(self):
+		return "PUSH" in self.name
+
+	@property
+	def is_stack_opcode(self):
+		return "DUP" in self.name or "SWAP" in self.name
+
 	def __str__(self):
 		return self.name
 

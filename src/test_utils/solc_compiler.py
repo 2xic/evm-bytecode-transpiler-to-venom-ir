@@ -23,10 +23,36 @@ class SolcCompiler:
 		output = self._get_solidity_output(file_content, settings)
 		return self._get_solc_bytecode(output, "main.sol")
 
+	def compile_yul(self, file_content, settings=CompilerSettings()) -> bytes:
+		solcx.install_solc(settings.solc_version)
+		request = self._get_standard_json(file_content, target="Yul")
+		return self._get_solc_bytecode(
+			solcx.compile_standard(
+				request,
+				solc_version=settings.solc_version,
+			),
+			"main.sol",
+			key="bytecode",
+		)
+
 	def _get_solidity_output(self, file_content, settings: CompilerSettings):
 		solcx.install_solc(settings.solc_version)
-		request = {
-			"language": "Solidity",
+		request = self._get_standard_json(
+			file_content,
+		)
+		return solcx.compile_standard(
+			request,
+			solc_version=settings.solc_version,
+		)
+
+	def _get_standard_json(
+		self,
+		file_content: str,
+		settings: CompilerSettings = CompilerSettings(),
+		target="Solidity",
+	):
+		return {
+			"language": target,
 			"sources": {
 				"main.sol": {
 					"content": file_content,
@@ -61,10 +87,6 @@ class SolcCompiler:
 				"viaIR": settings.via_ir,
 			},
 		}
-		return solcx.compile_standard(
-			request,
-			solc_version=settings.solc_version,
-		)
 
 	def _get_solc_bytecode(self, output, file, key="deployedBytecode"):
 		solc = output["contracts"][file]
