@@ -137,38 +137,27 @@ def test_basic_for_loop():
 				JUMP @block_0x1
 		@block_0x1:
 				%1 = 10
-				%phi0 = @block_0x0, %0,@block_0xe, %26
-				%phi1 = @block_0x0, %2,@block_0xe, %2
-				LT %phi0,%phi1
-				%2 = 14
-				%phi2 = @block_0x0, %6,@block_0xe, %6
-				%phi3 = @block_0x0, %5,@block_0xe, %5
-				JUMPI %phi2,%phi3
+				%phi0 = @block_0x0, %0,@block_0xe, %2
+				%3 = LT %phi0,%1
+				%4 = 14
+				JUMPI %4,%3
 		@block_0x9:
-				%3 = 512
-				%4 = 0
-				%phi4 = @block_0x1, %12
-				%phi5 = @block_0x1, %9
-				RETURN %phi4,%phi5
+				%5 = 512
+				%6 = 0
+				RETURN %6,%5
 		@block_0xe:
-				%5 = 32
-				%6 = 1
-				%phi6 = @block_0x1, %0,@block_0x1, %26
-				%phi7 = @block_0x1, %17
-				MUL %phi6,%phi7
-				%7 = 0
-				%phi8 = @block_0x1, %23
-				%phi9 = @block_0x1, %22
-				ADD %phi8,%phi9
-				%phi10 = @block_0x1, %24
-				%phi11 = @block_0x1, %0,@block_0x1, %26
-				MSTORE %phi10,%phi11
-				%phi12 = @block_0x1, %0,@block_0x1, %26
-				%phi13 = @block_0x1, %19
-				ADD %phi12,%phi13
+				%7 = 32
 				%8 = 1
-				%phi14 = @block_0x1, %27
-				JUMP %phi14
+				%phi6 = @block_0x1, %0,@block_0x1, %2
+				%9 = MUL %phi6,%7
+				%10 = 0
+				%11 = ADD %10,%9
+				%phi11 = @block_0x1, %0,@block_0x1, %2
+				MSTORE %11,%phi11
+				%phi12 = @block_0x1, %0,@block_0x1, %2
+				%2 = ADD %phi12,%8
+				%12 = 1
+				JUMP %12
 		""",
 		str(output_block),
 	)

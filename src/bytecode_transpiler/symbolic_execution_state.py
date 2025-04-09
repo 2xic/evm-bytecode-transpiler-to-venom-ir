@@ -258,53 +258,61 @@ class SsaBlock:
 	def resolve_operands(
 		self,
 		op: ExecutionState,
-		variable_lookups: Dict[str, int],
-		variable_usage: Dict[str, bool],
+		variable_lookups: "VariableResolver",
 	):
 		if op.opcode.name == "JUMP":
 			assert isinstance(op.operands[0], ConstantValue)
 			return [SsaBlockReference(op.operands[0].value)]
 		elif op.opcode.name == "JUMPI":
 			assert isinstance(op.operands[0], ConstantValue)
-			variable_usage[variable_lookups[op.operands[1].pc]] = True
 			return [
-				SsaVariablesReference(variable_lookups[op.operands[1].pc]),
+				SsaVariablesReference(
+					variable_lookups.get_variable_id(op.operands[1].pc)
+					# variable_lookups.get_variable(op.operands[1].pc).var_id
+				),
 				SsaBlockReference(op.operands[0].value),
 				SsaBlockReference(op.operands[2]),
 			]
 		elif all([isinstance(op, ConstantValue) for op in op.operands]):
 			return [opcode.value for opcode in op.operands]
 		else:
-			for var in op.operands:
-				variable_usage[variable_lookups[var.pc]] = True
+			# for var in op.operands:
+			# variable_usage[variable_lookups[var.pc]] = True
 			return [
-				SsaVariablesReference(id=variable_lookups[opcode.pc])
+				SsaVariablesReference(
+					id=variable_lookups.get_variable_id(opcode.pc, used=True)
+				)
 				for opcode in op.operands
 			]
 
 	def add_instruction(
 		self,
 		op: ExecutionState,
-		variable_lookups: Dict[str, int],
-		variable_usage: Dict[str, bool],
+		variable_lookups: "VariableResolver",
 	):
-		operands = self.resolve_operands(op, variable_lookups, variable_usage)
+		operands = self.resolve_operands(op, variable_lookups)
 		opcode = op.opcode
+		print(opcode.name, opcode.outputs)
 		if opcode.is_push_opcode or opcode.outputs > 0:
+			var_id = variable_lookups.get_variable_id(opcode.pc)
+
 			if isinstance(opcode, PushOpcode):
 				self.instruction.append(
 					SsaVariable(
-						len(variable_lookups), SsaVariablesLiteral(opcode.value())
+						var_id,
+						SsaVariablesLiteral(opcode.value()),
 					)
 				)
 			else:
 				self.instruction.append(
 					SsaVariable(
-						len(variable_lookups),
+						var_id,
 						SsaInstruction(opcode.name, operands),
 					)
 				)
-			variable_lookups[opcode.pc] = len(variable_lookups)
+			variable_lookups.add_variable(
+				opcode.pc, op.trace.blocks[-1], self.instruction[-1], var_id
+			)
 		else:
 			self.instruction.append(SsaInstruction(opcode.name, operands))
 
@@ -343,13 +351,44 @@ class SsaProgram:
 
 
 @dataclass
+class VariableDefinition:
+	variable: SsaVariable
+	block: int
+	var_id: int
+
+
+class VariableResolver:
+	def __init__(self):
+		self.variables = {}
+		self.variable_usage = {}
+		self.pc_to_id = {}
+
+	def add_variable(self, pc, block, value, var_id):
+		assert pc not in self.variables
+		var_id = self.get_variable_id(pc)
+		self.variables[var_id] = VariableDefinition(value, block, var_id)
+
+	def get_variable(self, pc) -> VariableDefinition:
+		pc = self.get_variable_id(pc)
+		self.variable_usage[pc] = True
+		return self.variables[pc]
+
+	def get_variable_id(self, pc, used=False):
+		if pc in self.pc_to_id:
+			if used:
+				self.variable_usage[pc] = True
+			return self.pc_to_id[pc]
+		self.pc_to_id[pc] = len(self.pc_to_id)
+		return self.pc_to_id[pc]
+
+
+@dataclass
 class SsaProgramBuilder:
 	execution: ProgramExecution
 
 	def create_program(self) -> SsaProgram:
 		blocks: List[SsaBlock] = []
-		variable_lookups = {}
-		variable_usage = {}
+		variable_lookups = VariableResolver()
 		phi_counter = 0
 		cleanup = True
 		for block in self.execution.basic_blocks:
@@ -362,32 +401,56 @@ class SsaProgramBuilder:
 				# print(execution)
 				if len(execution) == 1 or i.is_push_opcode:
 					op = execution[0]
-					ssa_block.add_instruction(op, variable_lookups, variable_usage)
+					ssa_block.add_instruction(op, variable_lookups)
 				elif len(execution) > 1 and not i.is_push_opcode:
 					op = execution[0]
 					outputs = []
 					for var_index in range(op.opcode.inputs):
 						edges = OrderedSet()
+						values = OrderedSet()
 						for i in execution:
+							var_id = variable_lookups.get_variable_id(
+								i.operands[var_index].pc,
+								used=True,
+							)
 							edges.add(
 								PhiEdge(
 									block=SsaBlockReference(i.trace.blocks[-2]),
-									variable=SsaVariablesReference(
-										i.operands[var_index].pc
-									),
+									variable=SsaVariablesReference(var_id),
 								)
 							)
-						var = PhiFunction(edges, f"phi{phi_counter}")
-						ssa_block.instruction.append(var)
-						outputs.append(SsaVariablesReference(f"phi{phi_counter}"))
+							values.add(i.operands[var_index].pc)
+						if len(values) > 1:
+							var = PhiFunction(edges, f"phi{phi_counter}")
+							ssa_block.instruction.append(var)
+							outputs.append(SsaVariablesReference(f"phi{phi_counter}"))
+						else:
+							outputs.append(edges[0].variable)
 						phi_counter += 1
 					# print(op.opcode.name)
-					ssa_block.instruction.append(
-						SsaInstruction(
-							op.opcode.name,
-							outputs,
+					if op.opcode.outputs > 0:
+						var_id = variable_lookups.get_variable_id(
+							op.opcode.pc, used=True
 						)
-					)
+						ssa_block.instruction.append(
+							SsaVariable(
+								var_id,
+								SsaInstruction(op.opcode.name, outputs),
+							)
+						)
+						variable_lookups.add_variable(
+							op.opcode.pc,
+							op.trace.blocks[-1],
+							ssa_block.instruction[-1],
+							var_id,
+						)
+					else:
+						ssa_block.instruction.append(
+							SsaInstruction(
+								op.opcode.name,
+								outputs,
+							)
+						)
 					cleanup = False
 
 			# print(list(map(lambda x: x.pc, i.operands)), i.trace.blocks[-2])
@@ -410,7 +473,7 @@ class SsaProgramBuilder:
 				for op in i.instruction:
 					if (
 						isinstance(op, SsaVariable)
-						and op.variable_name not in variable_usage
+						and op.variable_name not in variable_lookups.variable_usage
 						and isinstance(op.value, SsaVariablesLiteral)
 					):
 						ops.append(op)
