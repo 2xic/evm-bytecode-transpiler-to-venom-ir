@@ -42,11 +42,11 @@ def test_basic_ssa_program():
 			%0 = CALLDATASIZE 
 			%1 = RETURNDATASIZE 
 			%2 = RETURNDATASIZE 
-			CALLDATACOPY %2,%1,%0
+			CALLDATACOPY %2, %1, %0
 			%3 = CALLDATASIZE 
 			%4 = RETURNDATASIZE 
 			%5 = CALLVALUE 
-			%6 = CREATE %5,%4,%3
+			%6 = CREATE %5, %4, %3
 			STOP
 		""",
 		str(output_block),
@@ -65,8 +65,8 @@ def test_basic_add_program():
 	assert are_equal_ignoring_spaces(
 		"""
 		global:
-			MSTORE 0,66
-			RETURN 0,32
+			MSTORE 0, 66
+			RETURN 0, 32
 		""",
 		str(output_block),
 	)
@@ -88,7 +88,7 @@ def test_basic_blocks():
 					%0 = CALLDATASIZE 
 					%1 = RETURNDATASIZE 
 					%2 = RETURNDATASIZE 
-					CALLDATACOPY %2,%1,%0
+					CALLDATACOPY %2, %1, %0
 					%3 = RETURNDATASIZE 
 					%4 = RETURNDATASIZE 
 					%5 = RETURNDATASIZE 
@@ -96,15 +96,15 @@ def test_basic_blocks():
 					%7 = RETURNDATASIZE 
 					%8 = 1097817159418366163791829159214798623611012571465
 					%9 = GAS 
-					%10 = DELEGATECALL %9,%8,%7,%6,%5,%4
+					%10 = DELEGATECALL %9, %8, %7, %6, %5, %4
 					%11 = RETURNDATASIZE 
-					RETURNDATACOPY %3,%3,%11
+					RETURNDATACOPY %3, %3, %11
 					%12 = RETURNDATASIZE 
-					JUMPI %10,@block_0x2b,@block_0x2a
+					JUMPI %10, @block_0x2b, @block_0x2a
 			@block_0x2a:
-					REVERT %3,%12
+					REVERT %3, %12
 			@block_0x2b:
-					RETURN %3,%12
+					RETURN %3, %12
 		""",
 		str(output_block),
 	)
@@ -132,32 +132,126 @@ def test_basic_for_loop():
 	print(str(output_block))
 	assert are_equal_ignoring_spaces(
 		"""
-		global:
-				%0 = 0
-				JUMP @block_0x1
-		@block_0x1:
-				%1 = 10
-				%phi0 = @block_0x0, %0,@block_0xe, %2
-				%3 = LT %phi0,%1
-				%4 = 14
-				JUMPI %4,%3
-		@block_0x9:
-				%5 = 512
-				%6 = 0
-				RETURN %6,%5
-		@block_0xe:
-				%7 = 32
-				%8 = 1
-				%phi6 = @block_0x1, %0,@block_0x1, %2
-				%9 = MUL %phi6,%7
-				%10 = 0
-				%11 = ADD %10,%9
-				%phi11 = @block_0x1, %0,@block_0x1, %2
-				MSTORE %11,%phi11
-				%phi12 = @block_0x1, %0,@block_0x1, %2
-				%2 = ADD %phi12,%8
-				%12 = 1
-				JUMP %12
+			global:
+					%0 = 0
+					JUMP @block_0x1
+			@block_0x1:
+					%phi0 = @global, %0, @block_0xe, %2
+					%3 = LT %phi0, 10
+					JUMPI 14, %3
+			@block_0x9:
+					%5 = 512
+					%6 = 0
+					RETURN 0, 512
+			@block_0xe:
+					%phi1 = @block_0x1, %0, @block_0x1, %2
+					%9 = MUL %phi1, 32
+					%11 = ADD 0, %9
+					MSTORE %11, %phi1
+					%2 = ADD %phi1, 1
+					%12 = 1
+					JUMP 1
+					""",
+		str(output_block),
+	)
+
+
+def test_dynamic_jump():
+	yul_code = """
+		{			
+			switch selector()
+			case 0x0dbe671f {
+				let result := a()
+				returnUint(result)
+			}
+			case 0x4df7e3d0 {
+				let result := b()
+				returnUint(result)
+			}
+			default {
+				revert(0, 0)
+			}
+			
+			function a() -> result {
+				result := c(10)
+				result := add(result, 5)
+			}
+			
+			function b() -> result {
+				result := c(20) 
+				result := mul(result, 2)
+			}
+			
+			function c(x) -> result {
+				result := add(mul(x, 2), 1)
+			}
+			
+			function selector() -> s {
+				s := div(calldataload(0), 0x100000000000000000000000000000000000000000000000000000000)
+			}
+			
+			function returnUint(v) {
+				mstore(0, v)
+				return(0, 32)
+			}
+		}
+	"""
+	code = SolcCompiler().compile_yul(yul_code)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program()
+	# TODO: this is wrong
+	# - dynamic jump is not correctly handled
+	# - (18, 24, etc- undefined variables referenced
+	# -
+	print(str(output_block))
+	assert are_equal_ignoring_spaces(
+		"""
+			global:
+					JUMP @block_0x56
+			@block_0x5:
+					%4 = EQ %2, %3
+					JUMPI %4, @block_0x26, @block_0x10
+			@block_0x10:
+					%7 = EQ %6, %3
+					JUMPI %7, @block_0x1c, @block_0x19
+			@block_0x19:
+					REVERT 0, 0
+			@block_0x1c:
+					JUMP @block_0x3e
+			@block_0x22:
+					JUMP @block_0x61
+			@block_0x26:
+					JUMP @block_0x30
+			@block_0x2c:
+					JUMP @block_0x61
+			@block_0x30:
+					%16 = 5
+					JUMP @block_0x4c
+			@block_0x3a:
+					%21 = ADD %20, %16
+					JUMP @block_0x2c
+			@block_0x3e:
+					JUMP @block_0x4c
+			@block_0x48:
+					%26 = MUL %20, %22
+					JUMP @block_0x22
+			@block_0x4c:
+					%phi0 = @block_0x30, %18, @block_0x3e, %24
+					%29 = MUL %phi0, 2
+					%20 = ADD %29, 1
+					%phi1 = @block_0x30, %17, @block_0x3e, %23
+					JUMP %phi1
+			@block_0x56:
+					%32 = SHL 224, 1
+					%34 = CALLDATALOAD 0
+					%3 = DIV %34, %32
+					JUMP @block_0x5
+			@block_0x61:
+					%phi2 = @block_0x2c, %21, @block_0x22, %26
+					MSTORE 0, %phi2
+					RETURN 0, 32
 		""",
 		str(output_block),
 	)

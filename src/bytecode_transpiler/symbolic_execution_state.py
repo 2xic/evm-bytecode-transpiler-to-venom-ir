@@ -215,6 +215,8 @@ class SsaBlockReference:
 	id: int
 
 	def __str__(self):
+		if self.id == 0:
+			return "@global"
 		return f"@block_{hex(self.id)}"
 
 
@@ -227,13 +229,35 @@ class SsaVariablesLiteral:
 
 
 @dataclass
+class BaseSsaInstruction:
+	arguments: List[Union[SsaVariablesReference]] = field(default_factory=list)
+
+	def __str__(self):
+		variables = ", ".join(map(str, self.arguments))
+		return f"{self.value} {variables}"
+
+
+@dataclass
 class SsaInstruction:
 	value: str
 	arguments: List[Union[SsaVariablesReference]] = field(default_factory=list)
 
 	def __str__(self):
-		variables = ",".join(map(str, self.arguments))
+		variables = ", ".join(map(str, self.arguments))
 		return f"{self.value} {variables}"
+
+
+@dataclass
+class JmpInstruction(BaseSsaInstruction):
+	def __str__(self):
+		variables = ", ".join(map(str, self.arguments))
+		return f"JUMP {variables}"
+
+
+@dataclass
+class StopInstruction(BaseSsaInstruction):
+	def __str__(self):
+		return "STOP"
 
 
 @dataclass
@@ -243,6 +267,150 @@ class SsaVariable:
 
 	def __str__(self):
 		return f"%{self.variable_name} = {self.value}"
+
+
+@dataclass(frozen=True)
+class PhiEdge:
+	block: SsaBlockReference
+	variable: SsaBlockReference
+
+	def __str__(self):
+		return f"{self.block}, {self.variable}"
+
+
+@dataclass(frozen=True)
+class PhiFunctionNameless:
+	edges: OrderedSet[PhiEdge]
+
+	def __str__(self):
+		return f"%nameless phi function = {', '.join(map(str, self.edges))}"
+
+	def __hash__(self):
+		return hash(frozenset(self.edges))
+
+
+@dataclass(frozen=True)
+class PhiFunction(PhiFunctionNameless):
+	variable_name: str
+
+	def __str__(self):
+		return f"%{self.variable_name} = {', '.join(map(str, self.edges))}"
+
+
+@dataclass
+class VariableDefinition:
+	variable: SsaVariable
+	block: int
+	var_id: int
+
+
+class PhiHandler:
+	def __init__(self):
+		self.counter = 0
+		self.blocks = {}
+		self.ids = {}
+
+	def add_variable(self, id, phi_function: PhiFunctionNameless):
+		if id not in self.ids:
+			self.ids[id] = {}
+
+		if phi_function in self.ids[id]:
+			return self.ids[id][phi_function], False
+		self.ids[id][phi_function] = self.counter
+		self.counter += 1
+		return self.ids[id][phi_function], True
+
+
+class VariableResolver:
+	def __init__(self):
+		self.variables = {}
+		self.variable_usage = {}
+		self.pc_to_id = {}
+		self.phi_handler = PhiHandler()
+
+	def add_phi_variable(self, block_id, phi_function):
+		return self.phi_handler.add_variable(block_id, phi_function)
+
+	def add_variable(self, pc, block, value, var_id):
+		assert pc not in self.variables
+		var_id = self.get_variable_id(pc)
+		self.variables[var_id] = VariableDefinition(value, block, var_id)
+
+	def get_variable(self, pc) -> VariableDefinition:
+		pc = self.get_variable_id(pc)
+		self.variable_usage[pc] = True
+		return self.variables[pc]
+
+	def get_variable_id(self, pc, used=False):
+		if pc in self.pc_to_id:
+			if used:
+				self.variable_usage[pc] = True
+			return self.pc_to_id[pc]
+		self.pc_to_id[pc] = len(self.pc_to_id)
+		return self.pc_to_id[pc]
+
+	def get_phi_edges(self, execution: List[ExecutionState], block: BasicBlock):
+		op = execution[0]
+		outputs = []
+		new_instructions = []
+		for var_index in range(op.opcode.inputs):
+			opcode_name = op.opcode.name
+			edges = OrderedSet()
+			values = OrderedSet()
+			for i in execution:
+				var_pc = i.operands[var_index].pc
+				var_id = self.get_variable_id(
+					var_pc,
+					used=True,
+				)
+				# TODO: the block resolving here is not optimal or fully correct.
+				# it might require some recursive lookups.
+				edges.add(
+					PhiEdge(
+						block=SsaBlockReference(i.trace.blocks[-2]),
+						variable=SsaVariablesReference(var_id),
+					)
+				)
+				values.add(var_pc)
+
+			# If there are unique values then we need to add a phi node
+			if len(values) > 1:
+				phi_counter, new = self.add_phi_variable(
+					block.id,
+					PhiFunctionNameless(edges),
+				)
+				if new:
+					new_instructions.append(PhiFunction(edges, f"phi{phi_counter}"))
+				outputs.append(SsaVariablesReference(f"phi{phi_counter}"))
+			else:
+				var = op.operands[var_index]
+				if isinstance(var, ConstantValue):
+					outputs.append(var.value)
+					self.variable_usage[var.pc] = True
+				else:
+					outputs.append(edges[0].variable)
+		if op.opcode.outputs > 0:
+			var_id = self.get_variable_id(op.opcode.pc, used=True)
+			new_instructions.append(
+				SsaVariable(
+					var_id,
+					SsaInstruction(opcode_name, outputs),
+				)
+			)
+			self.add_variable(
+				op.opcode.pc,
+				op.trace.blocks[-1],
+				new_instructions[-1],
+				var_id,
+			)
+		else:
+			new_instructions.append(
+				SsaInstruction(
+					opcode_name,
+					outputs,
+				)
+			)
+		return new_instructions
 
 
 @dataclass
@@ -268,7 +436,6 @@ class SsaBlock:
 			return [
 				SsaVariablesReference(
 					variable_lookups.get_variable_id(op.operands[1].pc)
-					# variable_lookups.get_variable(op.operands[1].pc).var_id
 				),
 				SsaBlockReference(op.operands[0].value),
 				SsaBlockReference(op.operands[2]),
@@ -276,8 +443,6 @@ class SsaBlock:
 		elif all([isinstance(op, ConstantValue) for op in op.operands]):
 			return [opcode.value for opcode in op.operands]
 		else:
-			# for var in op.operands:
-			# variable_usage[variable_lookups[var.pc]] = True
 			return [
 				SsaVariablesReference(
 					id=variable_lookups.get_variable_id(opcode.pc, used=True)
@@ -292,7 +457,7 @@ class SsaBlock:
 	):
 		operands = self.resolve_operands(op, variable_lookups)
 		opcode = op.opcode
-		print(opcode.name, opcode.outputs)
+
 		if opcode.is_push_opcode or opcode.outputs > 0:
 			var_id = variable_lookups.get_variable_id(opcode.pc)
 
@@ -324,24 +489,6 @@ class SsaBlock:
 		)
 
 
-@dataclass(frozen=True)
-class PhiEdge:
-	block: SsaBlockReference
-	variable: SsaBlockReference
-
-	def __str__(self):
-		return f"{self.block}, {self.variable}"
-
-
-@dataclass
-class PhiFunction:
-	edges: OrderedSet[PhiEdge]
-	variable_name: str
-
-	def __str__(self):
-		return f"%{self.variable_name} = {','.join(map(str, self.edges))}"
-
-
 @dataclass
 class SsaProgram:
 	blocks: List[SsaBlock]
@@ -351,136 +498,54 @@ class SsaProgram:
 
 
 @dataclass
-class VariableDefinition:
-	variable: SsaVariable
-	block: int
-	var_id: int
-
-
-class VariableResolver:
-	def __init__(self):
-		self.variables = {}
-		self.variable_usage = {}
-		self.pc_to_id = {}
-
-	def add_variable(self, pc, block, value, var_id):
-		assert pc not in self.variables
-		var_id = self.get_variable_id(pc)
-		self.variables[var_id] = VariableDefinition(value, block, var_id)
-
-	def get_variable(self, pc) -> VariableDefinition:
-		pc = self.get_variable_id(pc)
-		self.variable_usage[pc] = True
-		return self.variables[pc]
-
-	def get_variable_id(self, pc, used=False):
-		if pc in self.pc_to_id:
-			if used:
-				self.variable_usage[pc] = True
-			return self.pc_to_id[pc]
-		self.pc_to_id[pc] = len(self.pc_to_id)
-		return self.pc_to_id[pc]
-
-
-@dataclass
 class SsaProgramBuilder:
 	execution: ProgramExecution
 
-	def create_program(self) -> SsaProgram:
+	def create_program(self) -> "SsaProgram":
 		blocks: List[SsaBlock] = []
 		variable_lookups = VariableResolver()
-		phi_counter = 0
-		cleanup = True
+
 		for block in self.execution.basic_blocks:
 			name = "global" if block.id == 0 else f"@block_{hex(block.id)}"
 			ssa_block = SsaBlock(name=name, instruction=[])
-			for i in block.opcodes:
-				if (not i.is_push_opcode and i.is_stack_opcode) or i.name == "JUMPDEST":
+			for op in block.opcodes:
+				if not op.is_push_opcode and op.is_stack_opcode:
 					continue
-				execution = self.execution.execution[i.pc]
-				# print(execution)
-				if len(execution) == 1 or i.is_push_opcode:
+				elif op.name == "JUMPDEST":
+					continue
+
+				execution = self.execution.execution[op.pc]
+				# Check each execution
+				if len(execution) == 1 or op.is_push_opcode:
+					# Single unique trace, no need to look for phi nodes
 					op = execution[0]
 					ssa_block.add_instruction(op, variable_lookups)
-				elif len(execution) > 1 and not i.is_push_opcode:
-					op = execution[0]
-					outputs = []
-					for var_index in range(op.opcode.inputs):
-						edges = OrderedSet()
-						values = OrderedSet()
-						for i in execution:
-							var_id = variable_lookups.get_variable_id(
-								i.operands[var_index].pc,
-								used=True,
-							)
-							edges.add(
-								PhiEdge(
-									block=SsaBlockReference(i.trace.blocks[-2]),
-									variable=SsaVariablesReference(var_id),
-								)
-							)
-							values.add(i.operands[var_index].pc)
-						if len(values) > 1:
-							var = PhiFunction(edges, f"phi{phi_counter}")
-							ssa_block.instruction.append(var)
-							outputs.append(SsaVariablesReference(f"phi{phi_counter}"))
-						else:
-							outputs.append(edges[0].variable)
-						phi_counter += 1
-					# print(op.opcode.name)
-					if op.opcode.outputs > 0:
-						var_id = variable_lookups.get_variable_id(
-							op.opcode.pc, used=True
-						)
-						ssa_block.instruction.append(
-							SsaVariable(
-								var_id,
-								SsaInstruction(op.opcode.name, outputs),
-							)
-						)
-						variable_lookups.add_variable(
-							op.opcode.pc,
-							op.trace.blocks[-1],
-							ssa_block.instruction[-1],
-							var_id,
-						)
-					else:
-						ssa_block.instruction.append(
-							SsaInstruction(
-								op.opcode.name,
-								outputs,
-							)
-						)
-					cleanup = False
+				elif len(execution) > 1 and not op.is_push_opcode:
+					# Multiple executions, might need a phi node.
+					for instruction in variable_lookups.get_phi_edges(execution, block):
+						ssa_block.instruction.append(instruction)
 
-			# print(list(map(lambda x: x.pc, i.operands)), i.trace.blocks[-2])
-			# raise Exception("Adding of phi nodes is unimplemented")
+			# Checks to make sure the block is correctly terminating.
 			if not ssa_block.is_terminating and block.next is not None:
 				ssa_block.instruction.append(
-					SsaInstruction(
-						value="JUMP", arguments=[SsaBlockReference(block.next)]
-					)
+					JmpInstruction(arguments=[SsaBlockReference(block.next)])
 				)
 			elif not ssa_block.is_terminating and block.next is None:
-				ssa_block.instruction.append(SsaInstruction(value="STOP", arguments=[]))
+				ssa_block.instruction.append(StopInstruction())
 
 			blocks.append(ssa_block)
 
-		# Post processing, mainly remove unused constant values.
-		if cleanup:
-			for i in blocks:
-				ops = []
-				for op in i.instruction:
-					if (
-						isinstance(op, SsaVariable)
-						and op.variable_name not in variable_lookups.variable_usage
-						and isinstance(op.value, SsaVariablesLiteral)
-					):
-						ops.append(op)
-					else:
-						print("keep ", type(op), op)
-				for var in ops:
-					i.instruction.remove(var)
+		for block in blocks:
+			ops = []
+			for op in block.instruction:
+				if (
+					isinstance(op, SsaVariable)
+					and op.variable_name not in variable_lookups.variable_usage
+					and isinstance(op.value, SsaVariablesLiteral)
+				):
+					ops.append(op)
+			for var in ops:
+				block.instruction.remove(var)
 
 		return SsaProgram(
 			blocks,
