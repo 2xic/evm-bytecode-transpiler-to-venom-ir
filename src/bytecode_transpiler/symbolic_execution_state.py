@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Union, Optional
+from typing import Dict, List, Union, Optional, Tuple
 from bytecode_transpiler.bytecode_basic_blocks import (
 	get_basic_blocks,
 	BasicBlock,
@@ -16,6 +16,7 @@ from bytecode_transpiler.symbolic import EVM
 from collections import defaultdict
 from copy import deepcopy
 from ordered_set import OrderedSet
+import graphviz
 
 """
 One final rewrite.
@@ -28,6 +29,22 @@ The second part should not manipulate the state of the first part. They are two 
 
 
 @dataclass(frozen=True)
+class DirectJump:
+	to_id: int
+
+
+@dataclass(frozen=True)
+class ConditionalJump:
+	true_id: int
+	false_id: int
+
+
+@dataclass
+class CfgBasicBlock(BasicBlock):
+	outgoing: OrderedSet[Union[DirectJump, ConditionalJump]]
+
+
+@dataclass(frozen=True)
 class ConstantValue:
 	value: int
 	pc: int
@@ -36,7 +53,7 @@ class ConstantValue:
 @dataclass(frozen=True)
 class OpcodeValue:
 	name: str
-	inputs: List[Union["OpcodeValue", ConstantValue]]
+	inputs: Tuple[Union["OpcodeValue", ConstantValue]]
 	pc: int
 
 	def constant_fold(self):
@@ -76,7 +93,7 @@ class ProgramTrace:
 @dataclass(frozen=True)
 class ExecutionState:
 	opcode: Opcode
-	operands: List[Union[ConstantValue, OpcodeValue]]
+	operands: Tuple[Union[ConstantValue, OpcodeValue]]
 	# How did we get to the current state=
 	trace: ExecutionTrace
 
@@ -85,24 +102,33 @@ class ExecutionState:
 class ProgramExecution:
 	# General CFG information
 	blocks: Dict[str, List[str]]
-	basic_blocks: List[BasicBlock]
+	cfg_blocks: List[CfgBasicBlock]
 	# Execution information
-	execution: Dict[str, List[ExecutionState]]
+	execution: Dict[str, OrderedSet[ExecutionState]]
 
 	@classmethod
 	def create_from_bytecode(cls, bytecode: bytes):
 		assert isinstance(bytecode, bytes)
-		basic_blocks = get_basic_blocks(get_opcodes_from_bytes(bytecode))
-		blocks_lookup: Dict[str, BasicBlock] = {
-			block.id: block for block in basic_blocks
+		basic_block = get_basic_blocks(get_opcodes_from_bytes(bytecode))
+		cfg_blocks: List[CfgBasicBlock] = []
+		for block in basic_block:
+			cfg_blocks.append(
+				CfgBasicBlock(
+					opcodes=block.opcodes,
+					next=block.next,
+					outgoing=OrderedSet([]),
+				)
+			)
+		blocks_lookup: Dict[str, CfgBasicBlock] = {
+			block.id: block for block in cfg_blocks
 		}
 		blocks = defaultdict(set)
 		for block in blocks_lookup:
 			blocks[block] = set()
-		program_executions = defaultdict(list)
+		program_executions = defaultdict(OrderedSet)
 		program_trace = ProgramTrace()
 		visited: Dict[tuple, int] = defaultdict(int)
-		execution_blocks: List[tuple[BasicBlock, EVM, ExecutionTrace]] = [
+		execution_blocks: List[tuple[CfgBasicBlock, EVM, ExecutionTrace]] = [
 			(blocks_lookup[0], EVM(pc=0), program_trace.fork(None))
 		]
 		while len(execution_blocks) > 0:
@@ -140,6 +166,7 @@ class ProgramExecution:
 						)
 					)
 					blocks[block.id].add(next_offset.value)
+					blocks_lookup[block.id].outgoing.add(DirectJump(next_offset.value))
 					inputs.append(next_offset)
 				elif opcode.name == "JUMPI":
 					next_offset = evm.pop_item()
@@ -157,6 +184,8 @@ class ProgramExecution:
 							program_trace.fork(execution_trace),
 						)
 					)
+
+					# False block
 					blocks[block.id].add(second_offset)
 					execution_blocks.append(
 						(
@@ -165,6 +194,13 @@ class ProgramExecution:
 							execution_trace,
 						)
 					)
+					blocks_lookup[block.id].outgoing.add(
+						ConditionalJump(
+							true_id=next_offset_value,
+							false_id=second_offset,
+						)
+					)
+
 					inputs += [next_offset, conditional, second_offset]
 				else:
 					for _ in range(opcode.inputs):
@@ -173,7 +209,7 @@ class ProgramExecution:
 						evm.stack.append(
 							OpcodeValue(
 								name=opcode.name,
-								inputs=inputs,
+								inputs=tuple(inputs),
 								pc=opcode.pc,
 							)
 						)
@@ -186,18 +222,19 @@ class ProgramExecution:
 							execution_trace,
 						)
 					)
+					blocks_lookup[block.id].outgoing.add(DirectJump(block.next))
 				# Always register the execution state for each opcode
 				program_executions[opcode.pc].append(
 					ExecutionState(
 						opcode=opcode,
-						operands=deepcopy(inputs),
+						operands=tuple(inputs),
 						trace=deepcopy(execution_trace),
 					)
 				)
 		assert len(execution_blocks) == 0
 		return cls(
 			execution=program_executions,
-			basic_blocks=basic_blocks,
+			cfg_blocks=cfg_blocks,
 			blocks=blocks,
 		)
 
@@ -208,6 +245,11 @@ class SsaVariablesReference:
 
 	def __str__(self):
 		return f"%{self.id}"
+
+
+@dataclass(frozen=True)
+class SsaPhiVariablesReference(SsaVariablesReference):
+	pass
 
 
 @dataclass(frozen=True)
@@ -255,6 +297,16 @@ class JmpInstruction(BaseSsaInstruction):
 
 
 @dataclass
+class DynamicJumpInstruction(BaseSsaInstruction):
+	target_blocks: List[SsaBlockReference] = field(default_factory=list)
+
+	def __str__(self):
+		variables = ", ".join(map(str, self.arguments))
+		blocks = ", ".join(map(str, self.target_blocks))
+		return f"DJUMP {variables}, {blocks}"
+
+
+@dataclass
 class StopInstruction(BaseSsaInstruction):
 	def __str__(self):
 		return "STOP"
@@ -263,7 +315,7 @@ class StopInstruction(BaseSsaInstruction):
 @dataclass
 class SsaVariable:
 	variable_name: str
-	value: SsaInstruction
+	value: Union[SsaInstruction, SsaVariablesLiteral]
 
 	def __str__(self):
 		return f"%{self.variable_name} = {self.value}"
@@ -323,7 +375,7 @@ class PhiHandler:
 
 class VariableResolver:
 	def __init__(self):
-		self.variables = {}
+		self.variables: Dict[int, VariableDefinition] = {}
 		self.variable_usage = {}
 		self.pc_to_id = {}
 		self.phi_handler = PhiHandler()
@@ -333,35 +385,38 @@ class VariableResolver:
 
 	def add_variable(self, pc, block, value, var_id):
 		assert pc not in self.variables
-		var_id = self.get_variable_id(pc)
+		var_id = self.register_variable_id(pc)
 		self.variables[var_id] = VariableDefinition(value, block, var_id)
 
-	def get_variable(self, pc) -> VariableDefinition:
-		pc = self.get_variable_id(pc)
-		self.variable_usage[pc] = True
-		return self.variables[pc]
-
-	def get_variable_id(self, pc, used=False):
-		if pc in self.pc_to_id:
-			if used:
-				self.variable_usage[pc] = True
-			return self.pc_to_id[pc]
-		self.pc_to_id[pc] = len(self.pc_to_id)
+	def get_variable_id(self, pc):
+		if pc not in self.pc_to_id:
+			self.register_variable_id(pc)
+		self.variable_usage[self.pc_to_id[pc]] = True
 		return self.pc_to_id[pc]
+
+	def register_variable_id(self, pc):
+		if pc not in self.pc_to_id:
+			self.pc_to_id[pc] = len(self.pc_to_id)
+			return self.pc_to_id[pc]
+		return self.pc_to_id[pc]
+
+	def resolve_variable(self, id: SsaVariablesReference):
+		results = self.variables[id.id].variable
+		return results
 
 	def get_phi_edges(self, execution: List[ExecutionState], block: BasicBlock):
 		op = execution[0]
 		outputs = []
 		new_instructions = []
+		phi_edges: List[PhiEdge] = []
+		opcode_name = op.opcode.name
 		for var_index in range(op.opcode.inputs):
-			opcode_name = op.opcode.name
 			edges = OrderedSet()
 			values = OrderedSet()
 			for i in execution:
 				var_pc = i.operands[var_index].pc
-				var_id = self.get_variable_id(
+				var_id = self.register_variable_id(
 					var_pc,
-					used=True,
 				)
 				# TODO: the block resolving here is not optimal or fully correct.
 				# it might require some recursive lookups.
@@ -379,9 +434,19 @@ class VariableResolver:
 					block.id,
 					PhiFunctionNameless(edges),
 				)
+				for i in values:
+					self.get_variable_id(i)
+				var_name = f"phi{phi_counter}"
 				if new:
-					new_instructions.append(PhiFunction(edges, f"phi{phi_counter}"))
-				outputs.append(SsaVariablesReference(f"phi{phi_counter}"))
+					new_instructions.append(PhiFunction(edges, var_name))
+				if new and op.opcode.name == "JUMP":
+					# Dynamic jump, need to update the references to use label
+					for i in edges:
+						var = self.resolve_variable(i.variable)
+						assert isinstance(var.value, SsaVariablesLiteral)
+						var.value = SsaBlockReference(var.value.value)
+				phi_edges.append(edges)
+				outputs.append(SsaPhiVariablesReference(var_name))
 			else:
 				var = op.operands[var_index]
 				if isinstance(var, ConstantValue):
@@ -389,8 +454,11 @@ class VariableResolver:
 					self.variable_usage[var.pc] = True
 				else:
 					outputs.append(edges[0].variable)
+		# Changes
 		if op.opcode.outputs > 0:
-			var_id = self.get_variable_id(op.opcode.pc, used=True)
+			var_id = self.get_variable_id(
+				op.opcode.pc,
+			)
 			new_instructions.append(
 				SsaVariable(
 					var_id,
@@ -402,6 +470,17 @@ class VariableResolver:
 				op.trace.blocks[-1],
 				new_instructions[-1],
 				var_id,
+			)
+		elif opcode_name == "JUMP" and isinstance(outputs[0], SsaPhiVariablesReference):
+			target_blocks = []
+			for i in phi_edges[0]:
+				var = self.resolve_variable(i.variable)
+				target_blocks.append(var.value)
+			new_instructions.append(
+				DynamicJumpInstruction(
+					outputs,
+					target_blocks,
+				)
 			)
 		else:
 			new_instructions.append(
@@ -415,8 +494,12 @@ class VariableResolver:
 
 @dataclass
 class SsaBlock:
+	id: int
 	name: str
 	instruction: List[Union[SsaInstruction, SsaVariable]]
+
+	# CFG#
+	outgoing: OrderedSet[Union[DirectJump, ConditionalJump]]
 
 	def __str__(self):
 		return "\n".join(
@@ -428,10 +511,12 @@ class SsaBlock:
 		op: ExecutionState,
 		variable_lookups: "VariableResolver",
 	):
+		# Special cases
 		if op.opcode.name == "JUMP":
 			assert isinstance(op.operands[0], ConstantValue)
 			return [SsaBlockReference(op.operands[0].value)]
 		elif op.opcode.name == "JUMPI":
+			assert len(op.operands) == 3
 			assert isinstance(op.operands[0], ConstantValue)
 			return [
 				SsaVariablesReference(
@@ -440,15 +525,21 @@ class SsaBlock:
 				SsaBlockReference(op.operands[0].value),
 				SsaBlockReference(op.operands[2]),
 			]
-		elif all([isinstance(op, ConstantValue) for op in op.operands]):
-			return [opcode.value for opcode in op.operands]
+		# General cases
 		else:
-			return [
-				SsaVariablesReference(
-					id=variable_lookups.get_variable_id(opcode.pc, used=True)
-				)
-				for opcode in op.operands
-			]
+			resolved_variables = []
+			for opcode in op.operands:
+				if isinstance(opcode, ConstantValue):
+					resolved_variables.append(opcode.value)
+				else:
+					resolved_variables.append(
+						SsaVariablesReference(
+							id=variable_lookups.get_variable_id(
+								opcode.pc,
+							)
+						)
+					)
+			return resolved_variables
 
 	def add_instruction(
 		self,
@@ -459,7 +550,7 @@ class SsaBlock:
 		opcode = op.opcode
 
 		if opcode.is_push_opcode or opcode.outputs > 0:
-			var_id = variable_lookups.get_variable_id(opcode.pc)
+			var_id = variable_lookups.register_variable_id(opcode.pc)
 
 			if isinstance(opcode, PushOpcode):
 				self.instruction.append(
@@ -486,7 +577,7 @@ class SsaBlock:
 		return (
 			isinstance(self.instruction[-1], SsaInstruction)
 			and self.instruction[-1].value.strip() in END_OF_BLOCK_OPCODES
-		)
+		) or isinstance(self.instruction[-1], DynamicJumpInstruction)
 
 
 @dataclass
@@ -495,6 +586,24 @@ class SsaProgram:
 
 	def __str__(self):
 		return "\n".join(map(str, self.blocks))
+
+	def create_plot(self):
+		dot = graphviz.Digraph(comment="cfg", format="pdf")
+		for block in self.blocks:
+			stringified_block = ""
+			str_block = str(block).split("\n")
+			for index, i in enumerate(str_block):
+				prefix = "\t" if index > 0 else ""
+				stringified_block += f"{prefix}{i} \\l"
+			dot.node(str(block.id), stringified_block, shape="box")
+			for next_node in block.outgoing:
+				if isinstance(next_node, DirectJump):
+					dot.edge(str(block.id), str(next_node.to_id))
+				elif isinstance(next_node, ConditionalJump):
+					n = next_node
+					dot.edge(str(block.id), str(n.false_id), label="f", color="red")
+					dot.edge(str(block.id), str(n.true_id), label="t", color="green")
+		dot.render("output/ssa", cleanup=True)
 
 
 @dataclass
@@ -505,9 +614,14 @@ class SsaProgramBuilder:
 		blocks: List[SsaBlock] = []
 		variable_lookups = VariableResolver()
 
-		for block in self.execution.basic_blocks:
+		for block in self.execution.cfg_blocks:
 			name = "global" if block.id == 0 else f"@block_{hex(block.id)}"
-			ssa_block = SsaBlock(name=name, instruction=[])
+			ssa_block = SsaBlock(
+				id=block.id,
+				name=name,
+				instruction=[],
+				outgoing=block.outgoing,
+			)
 			for op in block.opcodes:
 				if not op.is_push_opcode and op.is_stack_opcode:
 					continue

@@ -94,9 +94,8 @@ def test_basic_blocks():
 					%5 = RETURNDATASIZE 
 					%6 = CALLDATASIZE 
 					%7 = RETURNDATASIZE 
-					%8 = 1097817159418366163791829159214798623611012571465
 					%9 = GAS 
-					%10 = DELEGATECALL %9, %8, %7, %6, %5, %4
+					%10 = DELEGATECALL %9, 1097817159418366163791829159214798623611012571465, %7, %6, %5, %4
 					%11 = RETURNDATASIZE 
 					RETURNDATACOPY %3, %3, %11
 					%12 = RETURNDATASIZE 
@@ -140,7 +139,6 @@ def test_basic_for_loop():
 					%3 = LT %phi0, 10
 					JUMPI 14, %3
 			@block_0x9:
-					%5 = 512
 					%6 = 0
 					RETURN 0, 512
 			@block_0xe:
@@ -151,7 +149,7 @@ def test_basic_for_loop():
 					%2 = ADD %phi1, 1
 					%12 = 1
 					JUMP 1
-					""",
+		""",
 		str(output_block),
 	)
 
@@ -201,20 +199,17 @@ def test_dynamic_jump():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
-	# TODO: this is wrong
-	# - dynamic jump is not correctly handled
-	# - (18, 24, etc- undefined variables referenced
-	# -
+	output_block.create_plot()
 	print(str(output_block))
 	assert are_equal_ignoring_spaces(
 		"""
 			global:
 					JUMP @block_0x56
 			@block_0x5:
-					%4 = EQ %2, %3
+					%4 = EQ 230582047, %3
 					JUMPI %4, @block_0x26, @block_0x10
 			@block_0x10:
-					%7 = EQ %6, %3
+					%7 = EQ 1308091344, %3
 					JUMPI %7, @block_0x1c, @block_0x19
 			@block_0x19:
 					REVERT 0, 0
@@ -227,22 +222,25 @@ def test_dynamic_jump():
 			@block_0x2c:
 					JUMP @block_0x61
 			@block_0x30:
-					%16 = 5
+					%17 = @block_0x3a
+					%18 = 10
 					JUMP @block_0x4c
 			@block_0x3a:
-					%21 = ADD %20, %16
+					%21 = ADD %20, 5
 					JUMP @block_0x2c
 			@block_0x3e:
+					%23 = @block_0x48
+					%24 = 20
 					JUMP @block_0x4c
 			@block_0x48:
-					%26 = MUL %20, %22
+					%26 = MUL %20, 2
 					JUMP @block_0x22
 			@block_0x4c:
 					%phi0 = @block_0x30, %18, @block_0x3e, %24
 					%29 = MUL %phi0, 2
 					%20 = ADD %29, 1
 					%phi1 = @block_0x30, %17, @block_0x3e, %23
-					JUMP %phi1
+					DJUMP %phi1, @block_0x3a, @block_0x48
 			@block_0x56:
 					%32 = SHL 224, 1
 					%34 = CALLDATALOAD 0
