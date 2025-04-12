@@ -17,6 +17,7 @@ from collections import defaultdict
 from copy import deepcopy
 from ordered_set import OrderedSet
 import graphviz
+from bytecode_transpiler.vyper_compiler import compile_venom
 
 """
 One final rewrite.
@@ -200,7 +201,6 @@ class ProgramExecution:
 							false_id=second_offset,
 						)
 					)
-
 					inputs += [next_offset, conditional, second_offset]
 				else:
 					for _ in range(opcode.inputs):
@@ -249,7 +249,8 @@ class SsaVariablesReference:
 
 @dataclass(frozen=True)
 class SsaPhiVariablesReference(SsaVariablesReference):
-	pass
+	def __str__(self):
+		return f"%phi{self.id}"
 
 
 @dataclass(frozen=True)
@@ -281,19 +282,33 @@ class BaseSsaInstruction:
 
 @dataclass
 class SsaInstruction:
-	value: str
+	name: str
 	arguments: List[Union[SsaVariablesReference]] = field(default_factory=list)
 
 	def __str__(self):
 		variables = ", ".join(map(str, self.arguments))
-		return f"{self.value} {variables}"
+		if self.get_name() == "JMP":
+			assert isinstance(self.arguments[0], SsaBlockReference)
+		elif self.get_name() == "JNZ":
+			print(self.arguments)
+			assert len(self.arguments) == 3
+		return f"{self.get_name()} {variables}"
+
+	def get_name(self):
+		if self.name == "JUMP":
+			return "JMP"
+		elif self.name == "JUMPI":
+			return "JNZ"
+		else:
+			return self.name
 
 
 @dataclass
 class JmpInstruction(BaseSsaInstruction):
 	def __str__(self):
-		variables = ", ".join(map(str, self.arguments))
-		return f"JUMP {variables}"
+		variables = self.arguments[0]
+		assert isinstance(variables, SsaBlockReference)
+		return f"JMP {variables}"
 
 
 @dataclass
@@ -303,7 +318,7 @@ class DynamicJumpInstruction(BaseSsaInstruction):
 	def __str__(self):
 		variables = ", ".join(map(str, self.arguments))
 		blocks = ", ".join(map(str, self.target_blocks))
-		return f"DJUMP {variables}, {blocks}"
+		return f"DJMP {variables}, {blocks}"
 
 
 @dataclass
@@ -346,7 +361,8 @@ class PhiFunction(PhiFunctionNameless):
 	variable_name: str
 
 	def __str__(self):
-		return f"%{self.variable_name} = {', '.join(map(str, self.edges))}"
+		reference = SsaPhiVariablesReference(self.variable_name)
+		return f"{reference} = phi {', '.join(map(str, self.edges))}"
 
 
 @dataclass
@@ -404,15 +420,19 @@ class VariableResolver:
 		results = self.variables[id.id].variable
 		return results
 
-	def get_phi_edges(self, execution: List[ExecutionState], block: BasicBlock):
+	def get_phi_edges(
+		self,
+		execution: List[ExecutionState],
+		block_information: "BlockInformation",
+	):
 		op = execution[0]
-		outputs = []
-		new_instructions = []
+		new_inputs = []
 		phi_edges: List[PhiEdge] = []
-		opcode_name = op.opcode.name
+		# TODO: in this case we assume that we can add it to the same block, that might not be the case.
+		new_instructions = []
 		for var_index in range(op.opcode.inputs):
-			edges = OrderedSet()
-			values = OrderedSet()
+			edges: OrderedSet[PhiEdge] = OrderedSet()
+			values: OrderedSet[int] = OrderedSet()
 			for i in execution:
 				var_pc = i.operands[var_index].pc
 				var_id = self.register_variable_id(
@@ -420,41 +440,79 @@ class VariableResolver:
 				)
 				# TODO: the block resolving here is not optimal or fully correct.
 				# it might require some recursive lookups.
-				edges.add(
-					PhiEdge(
-						block=SsaBlockReference(i.trace.blocks[-2]),
-						variable=SsaVariablesReference(var_id),
+				previous_blocks = None
+				blocks = deepcopy(i.trace.blocks)
+				target_block_id = block_information.get_block_from_pc(var_pc)
+				assert target_block_id in blocks
+				while len(blocks) > 0:
+					id = blocks.pop()
+					# If the variable is not already added then we should try to add it ...
+					# Or is there a way for us to at least know which block this variable will be defined in?
+					# Yes, we have the control flow and could have a mapping of pc -> block lookup.
+					if target_block_id == id:
+						break
+					previous_blocks = id
+
+				# This can't even be a phi function as it's already defined in this block
+				if previous_blocks is None:
+					# This should indicate that there is a bug with the placement.
+					edges.add(
+						PhiEdge(
+							block=SsaBlockReference(block_information.current_block.id),
+							variable=SsaVariablesReference(var_id),
+						)
 					)
-				)
-				values.add(var_pc)
+					values.add(var_pc)
+				else:
+					# OKay so know we know which block gets it as input
+					edges.add(
+						PhiEdge(
+							# This is not correct as it could reference any random block which also use the variable.
+							block=SsaBlockReference(i.trace.blocks[-2]),
+							variable=SsaVariablesReference(var_id),
+						)
+					)
+					values.add(var_pc)
 
 			# If there are unique values then we need to add a phi node
 			if len(values) > 1:
+				# TODO: Should validate that the inputs are
 				phi_counter, new = self.add_phi_variable(
-					block.id,
+					block_information.current_block.id,
 					PhiFunctionNameless(edges),
 				)
+				# Mark teh value as used.
 				for i in values:
 					self.get_variable_id(i)
-				var_name = f"phi{phi_counter}"
+				# TODO: this could be placed at any ssa block.
 				if new:
-					new_instructions.append(PhiFunction(edges, var_name))
+					new_instructions.append(PhiFunction(edges, phi_counter))
+				# Dynamic jump, need to update the references to use label
 				if new and op.opcode.name == "JUMP":
-					# Dynamic jump, need to update the references to use label
 					for i in edges:
 						var = self.resolve_variable(i.variable)
 						assert isinstance(var.value, SsaVariablesLiteral)
 						var.value = SsaBlockReference(var.value.value)
 				phi_edges.append(edges)
-				outputs.append(SsaPhiVariablesReference(var_name))
+				new_inputs.append(SsaPhiVariablesReference(phi_counter))
 			else:
 				var = op.operands[var_index]
 				if isinstance(var, ConstantValue):
-					outputs.append(var.value)
+					new_inputs.append(SsaVariablesLiteral(var.value))
 					self.variable_usage[var.pc] = True
 				else:
-					outputs.append(edges[0].variable)
-		# Changes
+					new_inputs.append(edges[0].variable)
+
+		# Just constructs the new phi instructions.
+		return self.create_phi_instructions(
+			execution, new_inputs, new_instructions, phi_edges
+		)
+
+	def create_phi_instructions(
+		self, execution: List[ExecutionState], new_inputs, new_instructions, phi_edges
+	):
+		op = execution[0]
+		opcode_name = op.opcode.name
 		if op.opcode.outputs > 0:
 			var_id = self.get_variable_id(
 				op.opcode.pc,
@@ -462,7 +520,7 @@ class VariableResolver:
 			new_instructions.append(
 				SsaVariable(
 					var_id,
-					SsaInstruction(opcode_name, outputs),
+					SsaInstruction(opcode_name, new_inputs),
 				)
 			)
 			self.add_variable(
@@ -471,22 +529,46 @@ class VariableResolver:
 				new_instructions[-1],
 				var_id,
 			)
-		elif opcode_name == "JUMP" and isinstance(outputs[0], SsaPhiVariablesReference):
+		elif opcode_name == "JUMP" and isinstance(
+			new_inputs[0], SsaPhiVariablesReference
+		):
 			target_blocks = []
 			for i in phi_edges[0]:
 				var = self.resolve_variable(i.variable)
 				target_blocks.append(var.value)
 			new_instructions.append(
 				DynamicJumpInstruction(
-					outputs,
+					new_inputs,
 					target_blocks,
+				)
+			)
+		elif opcode_name == "JUMP" and isinstance(new_inputs[0], SsaVariablesLiteral):
+			new_instructions.append(
+				SsaInstruction(
+					opcode_name,
+					[SsaBlockReference(new_inputs[0].value)],
+				)
+			)
+		elif opcode_name == "JUMPI":
+			# Input is next_block, conation
+			# We need to check what the next opcode is.
+			fallthrough_pc = execution[0].opcode.pc + 1
+			new_inputs = [
+				new_inputs[1],
+				SsaBlockReference(new_inputs[0].value),
+				SsaBlockReference(fallthrough_pc),
+			]
+			new_instructions.append(
+				SsaInstruction(
+					opcode_name,
+					new_inputs,
 				)
 			)
 		else:
 			new_instructions.append(
 				SsaInstruction(
 					opcode_name,
-					outputs,
+					new_inputs,
 				)
 			)
 		return new_instructions
@@ -496,14 +578,28 @@ class VariableResolver:
 class SsaBlock:
 	id: int
 	name: str
-	instruction: List[Union[SsaInstruction, SsaVariable]]
+	_instruction: List[Union[SsaInstruction, SsaVariable]] = field(default_factory=list)
 
 	# CFG#
-	outgoing: OrderedSet[Union[DirectJump, ConditionalJump]]
+	outgoing: OrderedSet[Union[DirectJump, ConditionalJump]] = field(
+		default_factory=list
+	)
+
+	def add_instruction(self, instr):
+		self._instruction.append(instr)
+
+	def remove_instruction(self, instr):
+		self._instruction.remove(instr)
+
+	@property
+	def instructions(self):
+		return sorted(
+			self._instruction, key=lambda x: 0 if isinstance(x, PhiFunction) else 1
+		)
 
 	def __str__(self):
 		return "\n".join(
-			[f"{self.name}:"] + list(map(lambda x: f"\t{x}", self.instruction))
+			[f"{self.name}:"] + list(map(lambda x: f"\t{x}", self.instructions))
 		)
 
 	def resolve_operands(
@@ -522,7 +618,9 @@ class SsaBlock:
 				SsaVariablesReference(
 					variable_lookups.get_variable_id(op.operands[1].pc)
 				),
+				# JUMP here if conditional is zero
 				SsaBlockReference(op.operands[0].value),
+				# JUMP here when conditional is non zero
 				SsaBlockReference(op.operands[2]),
 			]
 		# General cases
@@ -541,7 +639,7 @@ class SsaBlock:
 					)
 			return resolved_variables
 
-	def add_instruction(
+	def add_instruction_from_state(
 		self,
 		op: ExecutionState,
 		variable_lookups: "VariableResolver",
@@ -553,31 +651,31 @@ class SsaBlock:
 			var_id = variable_lookups.register_variable_id(opcode.pc)
 
 			if isinstance(opcode, PushOpcode):
-				self.instruction.append(
+				self._instruction.append(
 					SsaVariable(
 						var_id,
 						SsaVariablesLiteral(opcode.value()),
 					)
 				)
 			else:
-				self.instruction.append(
+				self._instruction.append(
 					SsaVariable(
 						var_id,
 						SsaInstruction(opcode.name, operands),
 					)
 				)
 			variable_lookups.add_variable(
-				opcode.pc, op.trace.blocks[-1], self.instruction[-1], var_id
+				opcode.pc, op.trace.blocks[-1], self._instruction[-1], var_id
 			)
 		else:
-			self.instruction.append(SsaInstruction(opcode.name, operands))
+			self._instruction.append(SsaInstruction(opcode.name, operands))
 
 	@property
 	def is_terminating(self):
 		return (
-			isinstance(self.instruction[-1], SsaInstruction)
-			and self.instruction[-1].value.strip() in END_OF_BLOCK_OPCODES
-		) or isinstance(self.instruction[-1], DynamicJumpInstruction)
+			isinstance(self._instruction[-1], SsaInstruction)
+			and self._instruction[-1].name.strip() in END_OF_BLOCK_OPCODES
+		) or isinstance(self._instruction[-1], DynamicJumpInstruction)
 
 
 @dataclass
@@ -605,6 +703,32 @@ class SsaProgram:
 					dot.edge(str(block.id), str(n.true_id), label="t", color="green")
 		dot.render("output/ssa", cleanup=True)
 
+	def convert_to_vyper_ir(self):
+		wrapped = ["function global {"]
+		for i in str(self).split("\n"):
+			wrapped.append("\t" + i.lower().rstrip())
+		wrapped.append("}")
+		code = "\n".join(wrapped)
+		return code
+
+	def compile(self):
+		bytecode = compile_venom(self.convert_to_vyper_ir())
+		return bytecode
+
+
+@dataclass
+class BlockInformation:
+	current_block: CfgBasicBlock
+	blocks: List[CfgBasicBlock]
+
+	# TODO: optimize this
+	def get_block_from_pc(self, pc):
+		for block in self.blocks:
+			for instr in block.opcodes:
+				if instr.pc == pc:
+					return block.id
+		return False
+
 
 @dataclass
 class SsaProgramBuilder:
@@ -612,14 +736,14 @@ class SsaProgramBuilder:
 
 	def create_program(self) -> "SsaProgram":
 		blocks: List[SsaBlock] = []
+		ssa_blocks: Dict[int, SsaBlock] = {}
 		variable_lookups = VariableResolver()
 
 		for block in self.execution.cfg_blocks:
-			name = "global" if block.id == 0 else f"@block_{hex(block.id)}"
+			name = "global" if block.id == 0 else f"block_{hex(block.id)}"
 			ssa_block = SsaBlock(
 				id=block.id,
 				name=name,
-				instruction=[],
 				outgoing=block.outgoing,
 			)
 			for op in block.opcodes:
@@ -633,25 +757,32 @@ class SsaProgramBuilder:
 				if len(execution) == 1 or op.is_push_opcode:
 					# Single unique trace, no need to look for phi nodes
 					op = execution[0]
-					ssa_block.add_instruction(op, variable_lookups)
+					ssa_block.add_instruction_from_state(op, variable_lookups)
 				elif len(execution) > 1 and not op.is_push_opcode:
 					# Multiple executions, might need a phi node.
-					for instruction in variable_lookups.get_phi_edges(execution, block):
-						ssa_block.instruction.append(instruction)
+					for instruction in variable_lookups.get_phi_edges(
+						execution,
+						BlockInformation(
+							current_block=block,
+							blocks=self.execution.cfg_blocks,
+						),
+					):
+						ssa_block.add_instruction(instruction)
 
 			# Checks to make sure the block is correctly terminating.
 			if not ssa_block.is_terminating and block.next is not None:
-				ssa_block.instruction.append(
+				ssa_block.add_instruction(
 					JmpInstruction(arguments=[SsaBlockReference(block.next)])
 				)
 			elif not ssa_block.is_terminating and block.next is None:
-				ssa_block.instruction.append(StopInstruction())
+				ssa_block.add_instruction(StopInstruction())
 
 			blocks.append(ssa_block)
+			ssa_blocks[ssa_block.id] = ssa_blocks
 
 		for block in blocks:
 			ops = []
-			for op in block.instruction:
+			for op in block.instructions:
 				if (
 					isinstance(op, SsaVariable)
 					and op.variable_name not in variable_lookups.variable_usage
@@ -659,7 +790,7 @@ class SsaProgramBuilder:
 				):
 					ops.append(op)
 			for var in ops:
-				block.instruction.remove(var)
+				block.remove_instruction(var)
 
 		return SsaProgram(
 			blocks,

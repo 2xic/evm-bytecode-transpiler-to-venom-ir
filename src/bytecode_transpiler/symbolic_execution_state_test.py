@@ -6,7 +6,7 @@ from test_utils.bytecodes import SINGLE_BLOCK, ERC721_DROP
 from test_utils.solc_compiler import SolcCompiler
 
 
-def normalize(x):
+def normalize(x: str):
 	return "\n".join(
 		list(
 			map(
@@ -51,6 +51,8 @@ def test_basic_ssa_program():
 		""",
 		str(output_block),
 	)
+	code = output_block.compile()
+	assert code.hex() == "363d3d37363d34f05000"
 
 
 def test_basic_add_program():
@@ -70,6 +72,8 @@ def test_basic_add_program():
 		""",
 		str(output_block),
 	)
+	code = output_block.compile()
+	assert code.hex() == "60425f5260205ff3"
 
 
 def test_basic_blocks():
@@ -99,14 +103,19 @@ def test_basic_blocks():
 					%11 = RETURNDATASIZE 
 					RETURNDATACOPY %3, %3, %11
 					%12 = RETURNDATASIZE 
-					JUMPI %10, @block_0x2b, @block_0x2a
-			@block_0x2a:
+					JNZ %10, @block_0x2b, @block_0x2a
+			block_0x2a:
 					REVERT %3, %12
-			@block_0x2b:
+			block_0x2b:
 					RETURN %3, %12
 		""",
 		str(output_block),
 	)
+	code = output_block.compile()
+	assert (
+		code.hex()
+		== "363d3d373d3d3d90369073c04bd2f0d484b7e0156b21c98b2923ca8b9ce1495af43d3d9081823e3d9161002e57fd5bf3"
+	), code.hex()
 
 
 def test_basic_for_loop():
@@ -128,29 +137,57 @@ def test_basic_for_loop():
 	output_block = program.create_program()
 	# TODO: this is wrong, it is probably trying to read from a phi variable.
 	# 		the old implementation handles this correctly.
-	print(str(output_block))
+	print(output_block.convert_to_vyper_ir())
+	print(code.hex())
+	exit(0)
 	assert are_equal_ignoring_spaces(
 		"""
 			global:
 					%0 = 0
-					JUMP @block_0x1
-			@block_0x1:
-					%phi0 = @global, %0, @block_0xe, %2
+					JMP @block_0x1
+			block_0x1:
+					%phi0 = phi @global, %0, @block_0xe, %2
 					%3 = LT %phi0, 10
-					JUMPI 14, %3
-			@block_0x9:
+					JNZ %3, @block_0xe, @block_0x9
+			block_0x9:
 					%6 = 0
 					RETURN 0, 512
-			@block_0xe:
-					%phi1 = @block_0x1, %0, @block_0x1, %2
+			block_0xe:
+					%phi1 = phi @block_0x1, %0, @block_0x1, %2
 					%9 = MUL %phi1, 32
 					%11 = ADD 0, %9
 					MSTORE %11, %phi1
 					%2 = ADD %phi1, 1
 					%12 = 1
-					JUMP 1
+					JMP @block_0x1
 		""",
 		str(output_block),
+	)
+	print(output_block.convert_to_vyper_ir())
+	assert are_equal_ignoring_spaces(
+		"""
+			function global {
+				global:
+						%0 = 0
+						jmp @block_0x1
+				block_0x1:
+						%phi0 = phi @global, %0, @block_0xe, %2
+						%3 = lt %phi0, 10
+						jnz %3, @block_0xe, @block_0x9
+				block_0x9:
+						%6 = 0
+						return 0, 512
+				block_0xe:
+						%phi1 = phi @block_0x1, %0, @block_0x1, %2
+						%9 = mul %phi1, 32
+						%11 = add 0, %9
+						mstore %11, %phi1
+						%2 = add %phi1, 1
+						%12 = 1
+						jmp @block_0x1
+			}
+		""",
+		output_block.convert_to_vyper_ir(),
 	)
 
 
@@ -204,52 +241,53 @@ def test_dynamic_jump():
 	assert are_equal_ignoring_spaces(
 		"""
 			global:
-					JUMP @block_0x56
-			@block_0x5:
+					JMP @block_0x56
+			block_0x5:
 					%4 = EQ 230582047, %3
-					JUMPI %4, @block_0x26, @block_0x10
-			@block_0x10:
+					JNZ %4, @block_0x26, @block_0x10
+			block_0x10:
 					%7 = EQ 1308091344, %3
-					JUMPI %7, @block_0x1c, @block_0x19
-			@block_0x19:
+					JNZ %7, @block_0x1c, @block_0x19
+			block_0x19:
 					REVERT 0, 0
-			@block_0x1c:
-					JUMP @block_0x3e
-			@block_0x22:
-					JUMP @block_0x61
-			@block_0x26:
-					JUMP @block_0x30
-			@block_0x2c:
-					JUMP @block_0x61
-			@block_0x30:
+			block_0x1c:
+					JMP @block_0x3e
+			block_0x22:
+					JMP @block_0x61
+			block_0x26:
+					JMP @block_0x30
+			block_0x2c:
+					JMP @block_0x61
+			block_0x30:
 					%17 = @block_0x3a
 					%18 = 10
-					JUMP @block_0x4c
-			@block_0x3a:
+					JMP @block_0x4c
+			block_0x3a:
 					%21 = ADD %20, 5
-					JUMP @block_0x2c
-			@block_0x3e:
+					JMP @block_0x2c
+			block_0x3e:
 					%23 = @block_0x48
 					%24 = 20
-					JUMP @block_0x4c
-			@block_0x48:
+					JMP @block_0x4c
+			block_0x48:
 					%26 = MUL %20, 2
-					JUMP @block_0x22
-			@block_0x4c:
-					%phi0 = @block_0x30, %18, @block_0x3e, %24
+					JMP @block_0x22
+			block_0x4c:
+					%phi0 = phi @block_0x30, %18, @block_0x3e, %24
+					%phi1 = phi @block_0x30, %17, @block_0x3e, %23
 					%29 = MUL %phi0, 2
 					%20 = ADD %29, 1
-					%phi1 = @block_0x30, %17, @block_0x3e, %23
-					DJUMP %phi1, @block_0x3a, @block_0x48
-			@block_0x56:
+					DJMP %phi1, @block_0x3a, @block_0x48
+			block_0x56:
 					%32 = SHL 224, 1
 					%34 = CALLDATALOAD 0
 					%3 = DIV %34, %32
-					JUMP @block_0x5
-			@block_0x61:
-					%phi2 = @block_0x2c, %21, @block_0x22, %26
+					JMP @block_0x5
+			block_0x61:
+					%phi2 = phi @block_0x2c, %21, @block_0x22, %26
 					MSTORE 0, %phi2
 					RETURN 0, 32
 		""",
 		str(output_block),
 	)
+	assert isinstance(output_block.compile(), bytes)
