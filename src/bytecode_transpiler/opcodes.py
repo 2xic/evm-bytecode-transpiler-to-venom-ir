@@ -15,7 +15,7 @@ class Opcode:
 
 	@property
 	def is_stack_opcode(self):
-		return "DUP" in self.name or "SWAP" in self.name
+		return "DUP" in self.name or "SWAP" in self.name or "POP" in self.name
 
 	def __str__(self):
 		return self.name
@@ -174,9 +174,7 @@ def get_opcodes_from_bytes(bytecode):
 					)
 				)
 			else:
-				data = bytecode[
-					instruction_pointer + 1 : instruction_pointer + 1 + size
-				]
+				data = bytecode[instruction_pointer + 1 : instruction_pointer + 1 + size]
 				outputs.append(
 					PushOpcode(
 						opcode["name"],
