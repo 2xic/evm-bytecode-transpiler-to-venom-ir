@@ -76,10 +76,7 @@ def get_compiler_info(address):
 		cache.put(key, data)
 		time.sleep(3)
 	# TODO, this will not correctly detect via ir etc.
-	if (
-		data["status"] == "1"
-		and data["result"][0]["ABI"] != "Contract source code not verified"
-	):
+	if data["status"] == "1" and data["result"][0]["ABI"] != "Contract source code not verified":
 		return {
 			"CompilerVersion": data["result"][0]["CompilerVersion"],
 			"OptimizationUsed": data["result"][0]["OptimizationUsed"],

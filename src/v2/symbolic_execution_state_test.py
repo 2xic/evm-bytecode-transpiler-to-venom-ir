@@ -1,4 +1,4 @@
-from bytecode_transpiler.symbolic_execution_state import (
+from v2.symbolic_execution_state import (
 	ProgramExecution,
 	SsaProgramBuilder,
 )
@@ -253,8 +253,6 @@ def test_dynamic_jump():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
-	output_block.create_plot()
-	print(str(output_block))
 	assert are_equal_ignoring_spaces(
 		"""
 			global:
@@ -290,19 +288,19 @@ def test_dynamic_jump():
 					%47 = MUL %55, 2
 					JMP @block_0x22
 			block_0x4c:
-					%phi0 = phi @block_0x30, %33, @block_0x3e, %43
-					%phi1 = phi @block_0x30, %32, @block_0x3e, %42
-					%54 = MUL %phi0, 2
+					%phi4 = phi @block_0x30, %33, @block_0x3e, %43
+					%phi5 = phi @block_0x30, %32, @block_0x3e, %42
+					%54 = MUL %phi4, 2
 					%55 = ADD %54, 1
-					DJMP %phi1, @block_0x3a, @block_0x48
+					DJMP %phi5, @block_0x3a, @block_0x48
 			block_0x56:
 					%61 = SHL 224, 1
 					%63 = CALLDATALOAD 0
 					%64 = DIV %63, %61
 					JMP @block_0x5
 			block_0x61:
-					%phi2 = phi @block_0x2c, %37, @block_0x22, %47
-					MSTORE 0, %phi2
+					%phi6 = phi @block_0x2c, %37, @block_0x22, %47
+					MSTORE 0, %phi6
 					RETURN 0, 32
 		""",
 		str(output_block),
@@ -348,7 +346,7 @@ def test_hello_solidity(code):
 	assert isinstance(code, bytes)
 
 
-def skip_test_should_handle_phi_djmps():
+def test_should_handle_phi_djmps():
 	code = """
 	contract Hello {
 		function test() public returns (uint256) {
@@ -366,10 +364,12 @@ def skip_test_should_handle_phi_djmps():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
-	output_block.create_plot()
+	# output_block.create_plot()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
 
 
-def skip_test_counter():
+def test_counter():
 	# From https://solidity-by-example.org/first-app/
 	code = """
 		contract Counter {
@@ -392,10 +392,97 @@ def skip_test_counter():
 			}
 		}
 	"""
-	code = SolcCompiler().compile(code)
-	print(code.hex())
+	code = SolcCompiler().compile(
+		code,
+	)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+
+def test_send_eth():
+	# From https://solidity-by-example.org/sending-ether/
+	code = """
+	contract SendEther {
+		function sendViaTransfer(address payable _to) public payable {
+			// This function is no longer recommended for sending Ether.
+			_to.transfer(msg.value);
+		}
+
+		function sendViaSend(address payable _to) public payable {
+			// Send returns a boolean value indicating success or failure.
+			// This function is not recommended for sending Ether.
+			bool sent = _to.send(msg.value);
+			require(sent, "Failed to send Ether");
+		}
+
+		function sendViaCall(address payable _to) public payable {
+			// Call returns a boolean value indicating success or failure.
+			// This is the current recommended method to use.
+			(bool sent, bytes memory data) = _to.call{value: msg.value}("");
+			require(sent, "Failed to send Ether");
+		}
+	}
+	"""
+	code = SolcCompiler().compile(
+		code,
+	)
 	program = SsaProgramBuilder(
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
 	output_block.create_plot()
+	print(output_block.convert_to_vyper_ir())
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+
+def test_assembly_variable():
+	# From https://solidity-by-example.org/assembly-variable/
+	code = """
+		contract AssemblyVariable {
+			function yul_let() public pure returns (uint256 z) {
+				assembly {
+					// The language used for assembly is called Yul
+					// Local variables
+					let x := 123
+					z := 456
+				}
+			}
+		}
+	"""
+	code = SolcCompiler().compile(
+		code,
+	)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program()
+	# output_block.create_plot()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+
+def test_multiple_functions():
+	code = """
+	contract Hello {
+		function timestamp() public returns (uint256) {
+			return block.timestamp;
+		}
+
+		function number() public returns (uint256) {
+			return block.number;
+		}
+	}
+	"""
+	code = SolcCompiler().compile(code)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program()
+	output_block.create_plot()
+	code = output_block.compile()
+	assert isinstance(code, bytes)

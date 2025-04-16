@@ -1,17 +1,19 @@
 # (wip) bytecode venom transpiler
-**_Currently limited support, but shows early signs of life_**
+**_Currently VERY limited support, it shows some signs of life_**
 
-Input raw EVM bytecode and get Venom IR out. 
+![It ain't much, but it's honest work](https://web.archive.org/web/20250416232244if_/https://static.wixstatic.com/media/e8b097_8fda4e0a85f84445b6c80bf631baa0b3~mv2.jpeg/v1/fill/w_700,h_464,al_c,q_80,usm_0.66_1.00_0.01,enc_avif,quality_auto/e8b097_8fda4e0a85f84445b6c80bf631baa0b3~mv2.jpeg)
 
 ## Motivation
 I was working on my own compiler alternative to Solidity during the autumn of 2024, but didn't have time to fully prioritize it and then lost some interest in it. During Christmas Holidays I saw this tweet from one of the [Vyper and Venom developers](https://x.com/harkal/status/1870054989990666584) where he teased something like this, but it never got spoken about again and so I got curious to implement it myself.
 
 ## Known issues
+- The main running code is not well organized, I started on a [v2](./src/v2/), but it also has some problems. This has been a "compromise" while trying to figure out the best way to solve for the phi issue.
 - The placement of phi functions is not fully implemented and also not fully working. There is some basic support.
-- There will be edges cases in case of `CODECOPY` which we don't correctly cover. Or more generally, we don't model model memory or storage atm which could cause incorrect transpiled code.
+- There will be edges cases in case of `CODECOPY` and other memory realted opcodes which we don't correctly cover. We don't model model memory or storage atm which could cause incorrect transpiled code.
+
 
 ## Evals
-The script used to generate these are in [evals](./src/evals/eval.py)
+The script used to generate these are in [evals](./src/evals/eval.py). 
 
 ![bytecode sizes](./readme/bytecode_sizes.png)
 
@@ -54,5 +56,6 @@ There is a simple bash script in the root of this repo that can be used to view 
 - [Wikipedia article on SSA](https://en.wikipedia.org/wiki/Static_single-assignment_form)
 - [Venom IR readme](https://github.com/vyperlang/vyper/blob/master/vyper/venom/README.md)
 - [Presetnation on Rattle](https://www.trailofbits.com/documents/RattleRecon.pdf) which converts bytecode into SSA form. Some ideas are applicable here. It's built on top of this [paper](https://c9x.me/compile/bib/braun13cc.pdf) which I should take more ideas from.
+  - Update: actually, I tried to to rewrite it to use this, but 
 - [Control flow graph reconstruction for EVM Bytecode](https://hackmd.io/@FranckC/rJIRA43Na) and [EtherSolve](https://arxiv.org/abs/2103.09113)
 - [Deadpub decompiler](https://app.dedaub.com/decompile) for sanity checking outputs.

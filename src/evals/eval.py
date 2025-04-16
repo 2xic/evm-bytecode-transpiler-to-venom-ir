@@ -107,9 +107,7 @@ tests = [
 		function_calls=[
 			FunctionCall(
 				name="setResults",
-				encoded=encode_function_call(
-					"setResults(address)", ["address"], ["0x" + "ff" * 20]
-				),
+				encoded=encode_function_call("setResults(address)", ["address"], ["0x" + "ff" * 20]),
 			),
 		],
 	),
@@ -263,9 +261,7 @@ def compile_vyper(contract: str):
 	venom_bytecode_optimized_input = transpile_from_bytecode(
 		SolcCompiler().compile(
 			contract,
-			CompilerSettings().optimize(
-				optimization_runs=OPTIMIZATION_RUNS, via_ir=False
-			),
+			CompilerSettings().optimize(optimization_runs=OPTIMIZATION_RUNS, via_ir=False),
 		),
 		DEFAULT_OPTIMIZATION_LEVEL,
 	)
@@ -287,7 +283,6 @@ def compile_vyper(contract: str):
 
 
 def plot_bytecode_size(bytecode_sizes: List[Results]):
-	# programs, vyper_sizes, solc_sizes = zip(*bytecode_sizes)
 	x = list(range(len(bytecode_sizes)))
 	programs = [i.id for i in bytecode_sizes]
 	width = 0.35
@@ -299,7 +294,7 @@ def plot_bytecode_size(bytecode_sizes: List[Results]):
 		list(map((lambda x: x - width / 2), x)),
 		gas_vyper,
 		width,
-		color=colors,  # Use the color list instead of a single color
+		color=colors,
 	)
 	ax.set_xlabel("Programs")
 	ax.set_ylabel("Bytecode Size Savings (%)")
@@ -338,7 +333,7 @@ def plot_gas_usage(gas_data: List[tuple[str, List[Results]]]):
 		list(map((lambda x: x - width / 2), x)),
 		gas_vyper,
 		width,
-		color=colors,  # Use the color list instead of a single color
+		color=colors,
 	)
 	ax.set_xlabel("Functions")
 	ax.set_ylabel("Gas Savings (%)")

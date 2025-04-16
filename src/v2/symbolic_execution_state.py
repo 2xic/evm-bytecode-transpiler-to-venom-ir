@@ -18,6 +18,7 @@ from copy import deepcopy
 from ordered_set import OrderedSet
 import graphviz
 from bytecode_transpiler.vyper_compiler import compile_venom
+import struct
 
 """
 One final rewrite.
@@ -182,7 +183,7 @@ class ProgramExecution:
 					blocks[block.id].add(next_offset.value)
 					blocks_lookup[block.id].outgoing.add(DirectJump(next_offset.value))
 					blocks_lookup[next_offset.value].incoming.add(block.id)
-					inputs.append(next_offset)
+					inputs = [next_offset]
 				elif opcode.name == "JUMPI":
 					next_offset = evm.pop_item()
 					conditional = evm.pop_item()
@@ -253,7 +254,98 @@ class ProgramExecution:
 			execution=program_executions,
 			cfg_blocks=list(filter(lambda x: x.id in touched_blocks, cfg_blocks)),
 			blocks=blocks,
-		)
+		).remove_stateless_jumps()
+
+	def remove_stateless_jumps(self):
+		# In some cases the compiler will insert a node which just does
+		# In block -> dynamic jump that -> Out block
+		cfg_mappings = {i.id: i for i in self.cfg_blocks}
+		for block in self.cfg_blocks:
+			has_rentered_block = False
+			recursion_blocks = []
+			output_block = []
+			for i in block.outgoing:
+				value = i.to_id if isinstance(i, DirectJump) else None
+				if value in block.incoming:
+					has_rentered_block = True
+					recursion_blocks.append(i)
+				output_block.append(value)
+
+			# If there are a lot of incoming and outgoing jumps that are stateless, let's just unwrap them.
+			if block.opcodes[-1].name == "JUMP" and has_rentered_block:
+				mapping = {}
+				is_stateless = True
+				for i in block.incoming:
+					for v in output_block:
+						if v in block.incoming:
+							continue
+						executions = self.execution[v]
+						for exec in executions:
+							if i in exec.trace.blocks:
+								exec.trace.blocks.remove(block.id)
+								mapping[i] = exec.trace.blocks[-1]
+
+				if not is_stateless or len(mapping) == 0:
+					continue
+
+				for i in list(block.incoming):
+					if i in mapping:
+						target_block = cfg_mappings[i]
+						target_block.outgoing = [DirectJump(mapping[i])]
+
+						push_opcode = target_block.opcodes[-2]
+						jump_opcode = target_block.opcodes[-1]
+
+						new_target: int = mapping[i]
+						copy = list(self.execution[jump_opcode.pc][0].operands)
+						copy = [
+							ConstantValue(
+								new_target,
+								copy[0].pc,
+								copy[0].variable_name,
+							)
+						]
+						assert jump_opcode.name == "JUMP"
+						assert push_opcode.is_push_opcode
+						executions = self.execution[jump_opcode.pc][0]
+						assert len(self.execution[jump_opcode.pc]) > 0
+						target_block.opcodes[-2].data = struct.pack(">H", new_target)
+
+						self.execution[jump_opcode.pc] = OrderedSet(
+							[
+								ExecutionState(
+									operands=tuple(copy),
+									opcode=executions.opcode,
+									trace=executions.trace,
+									stack=executions.stack,
+									variable_name=executions.variable_name,
+								)
+							]
+						)
+
+						blocks = cfg_mappings[mapping[i]]
+						if block.id in blocks.incoming:
+							blocks.incoming.remove(block.id)
+						blocks.incoming.add(i)
+						for v in block.outgoing:
+							if v.to_id == mapping[i]:
+								block.outgoing.remove(v)
+
+				for i in recursion_blocks:
+					i = i.to_id
+					cfg_mappings[i].outgoing = OrderedSet([])
+					if cfg_mappings[i] in self.cfg_blocks:
+						self.cfg_blocks.remove(cfg_mappings[i])
+				self.cfg_blocks.remove(block)
+				# Remove the reference of the ids from the blocks
+				for i in self.execution:
+					for v in self.execution[i]:
+						for id in recursion_blocks:
+							if id in v.trace.blocks:
+								v.trace.blocks.remove(id)
+						if block.id in v.trace.blocks:
+							v.trace.blocks.remove(block.id)
+		return self
 
 
 @dataclass(frozen=True)
@@ -278,6 +370,14 @@ class SsaBlockReference:
 		if self.id == 0:
 			return "@global"
 		return f"@block_{hex(self.id)}"
+
+
+@dataclass(frozen=True)
+class SsaBlockTag:
+	id: str
+
+	def __str__(self):
+		return f"@{self.id}"
 
 
 @dataclass
@@ -421,28 +521,55 @@ class SsaVariableResolver:
 
 	def read_variable_recursive(self, variable, block: CfgBasicBlock, executions):
 		if len(block.incoming) == 1:
-			previous_block = self.blocks[block.incoming[0]]
+			previous_block_id = block.incoming[0]
+			previous_block = self.blocks[previous_block_id]
+			# TODO: not sure about this one boss.
+			if len(executions) > 0:
+				for blocks, _ in executions:
+					blocks.pop()
 			value = self.read_variable(variable, previous_block, executions)
 		else:
 			value = PhiFunction(OrderedSet(), self.phi_counter, placement=block.id)
 			self.phi_counter += 1
-			self.add_phi_operands(value, executions)
+			value = self.add_phi_operands(value, executions, block)
 			self.write_variable(variable, block, value)
 		self.write_variable(variable, block, value)
 		return value
 
-	def add_phi_operands(self, phi: PhiFunction, executions):
-		if len(executions) > 0:
-			for block, var in executions:
-				new_block = block.pop()
-				var = self.read_variable(var, new_block, executions)
-				if isinstance(var, PhiFunction):
-					phi.edges.add(PhiEdge(SsaBlockReference(new_block.id), SsaPhiVariablesReference(var.variable_name)))
-				else:
-					phi.edges.add(PhiEdge(SsaBlockReference(new_block.id), var))
-			return phi
+	def add_phi_operands(self, phi: PhiFunction, executions, current_block: CfgBasicBlock):
+		unvisited_blocks = deepcopy(current_block.incoming.items) if len(current_block.incoming.items) > 1 else []
+		for block, _ in executions:
+			if len(block) > 0 and block[-1].id in unvisited_blocks:
+				unvisited_blocks.remove(block[-1].id)
+		for block, var in executions:
+			# Unknown
+			if len(block) == 0:
+				return None
+			new_block = block.pop()
+			if new_block.id == current_block.id:
+				continue
+			var = self.read_variable(var, new_block, [(block, var)])
+			if isinstance(var, PhiFunction):
+				phi.edges.add(PhiEdge(SsaBlockReference(new_block.id), SsaPhiVariablesReference(var.variable_name)))
+			else:
+				phi.edges.add(PhiEdge(SsaBlockReference(new_block.id), var))
+
+		value = self.remove_trivial_phi(phi)
+		return value
+
+	def remove_trivial_phi(self, value: PhiFunction):
+		if len(value.edges) == 1:
+			return value.edges[0].variable
 		else:
-			raise Exception("How did I get into this state?")
+			return value
+
+	# TODO: figure out why it can't be done part of the original removal phase.
+	def post_remove_trivial_phi(self, var):
+		if isinstance(var, PhiFunction):
+			variable_ids = OrderedSet([i.variable.id for i in var.edges])
+			if len(variable_ids) == 1:
+				return var.edges[0].variable
+		return var
 
 
 class VariableResolver:
@@ -455,6 +582,7 @@ class VariableResolver:
 	def add_variable(self, pc, block, value, var_id):
 		# assert pc not in self.variables or self.variables[pc] == value
 		var_id = self.register_variable_id(pc)
+		assert not isinstance(value, int)
 		self.variables[var_id] = VariableDefinition(value, block, var_id)
 
 	def get_variable_id(self, pc):
@@ -547,7 +675,7 @@ class SsaBlock:
 				self._instruction.append(
 					SsaVariable(
 						var_id,
-						SsaVariablesLiteral(opcode.value()),
+						variable_lookups.variables[var_id].variable.value,
 					)
 				)
 			else:
@@ -652,10 +780,18 @@ class SsaProgramBuilder:
 
 	def create_program(self) -> "SsaProgram":
 		blocks: List[SsaBlock] = []
-		ssa_blocks: Dict[int, SsaBlock] = {}
+
 		cfg_blocks = {i.id: i for i in self.execution.cfg_blocks}
 		variable_lookups = VariableResolver(cfg_blocks)
-
+		ssa_blocks: Dict[int, SsaBlock] = {}
+		for block in self.execution.cfg_blocks:
+			name = "global" if block.id == 0 else f"block_{hex(block.id)}"
+			ssa_blocks[block.id] = SsaBlock(
+				id=block.id,
+				name=name,
+				outgoing=block.outgoing,
+				incoming=block.incoming,
+			)
 		# Register the values
 		for block in self.execution.cfg_blocks:
 			for op in block.opcodes:
@@ -667,11 +803,9 @@ class SsaProgramBuilder:
 					variable_lookups.add_variable(
 						op.pc,
 						block,
-						SsaVariablesLiteral(op.value()),
+						SsaVariable(var_id, SsaVariablesLiteral(op.value())),
 						var_id,
 					)
-				if var_id == 85:
-					print("HM?")
 				variable_lookups.ssa_resolver.var_lookup_id[var_id] = exec.variable_name
 				variable_lookups.ssa_resolver.var_lookup_id[exec.variable_name] = var_id
 
@@ -683,13 +817,7 @@ class SsaProgramBuilder:
 				)
 
 		for block in self.execution.cfg_blocks:
-			name = "global" if block.id == 0 else f"block_{hex(block.id)}"
-			ssa_block = SsaBlock(
-				id=block.id,
-				name=name,
-				outgoing=block.outgoing,
-				incoming=block.incoming,
-			)
+			ssa_block = ssa_blocks[block.id]
 			for op in block.opcodes:
 				if not op.is_push_opcode and op.is_stack_opcode:
 					continue
@@ -697,12 +825,13 @@ class SsaProgramBuilder:
 					continue
 
 				execution = self.execution.execution[op.pc]
+
 				# Check each execution
-				if len(execution) == 1 or op.is_push_opcode:
+				if op.is_push_opcode:  # len(execution) == 1 or
 					# Single unique trace, no need to look for phi nodes
 					op = execution[0]
 					ssa_block.add_instruction_from_state(op, variable_lookups)
-				elif len(execution) > 1 and not op.is_push_opcode:
+				else:
 					# Multiple executions, might need a phi node.
 					i = execution[0]
 					vars = []
@@ -715,7 +844,12 @@ class SsaProgramBuilder:
 						for i in execution:
 							edges.append(
 								(
-									list(map(lambda x: cfg_blocks[x], deepcopy(i.trace.blocks[:-1]))),
+									list(
+										map(
+											lambda x: cfg_blocks[x],
+											filter(lambda x: x in cfg_blocks, deepcopy(i.trace.blocks[:-1])),
+										)
+									),
 									i.operands[index].variable_name,
 								)
 							)
@@ -726,9 +860,18 @@ class SsaProgramBuilder:
 							block,
 							edges,
 						)
+						value = variable_lookups.ssa_resolver.post_remove_trivial_phi(value)
 						if isinstance(value, PhiFunction):
-							if block.id == value.placement:
+							if block.id == value.placement and value not in ssa_block.instructions:
 								ssa_block.add_instruction(value)
+							elif value.placement in ssa_blocks:
+								# TODO: I don't want this extra check, should be handled automatically
+								reference_block = ssa_blocks[value.placement]
+								if value not in reference_block.instructions:
+									reference_block.add_instruction(value)
+							else:
+								raise Exception("Block is unknown atm")
+
 							for edge in value.edges:
 								variable_lookups.variable_usage[edge.variable.id] = True
 							vars.append(SsaPhiVariablesReference(value.variable_name))
@@ -751,11 +894,18 @@ class SsaProgramBuilder:
 					if op.opcode.name == "JUMP" and isinstance(vars[0], SsaPhiVariablesReference):
 						resolved = []
 						for i in value.edges:
-							print(i.variable, type(i.variable))
-							var = variable_lookups.resolve_variable(i.variable).value
-							resolved.append(SsaBlockReference(var.value))
-							ref_id = variable_lookups.resolve_variable(i.variable)
-							if isinstance(ref_id.value, SsaVariablesLiteral):
+							if isinstance(i.variable, SsaPhiVariablesReference):
+								continue
+							var = variable_lookups.resolve_variable(i.variable)
+							assert isinstance(var, SsaVariable) or isinstance(var, SsaVariablesReference)
+							var = var.value
+							assert isinstance(var, SsaVariablesLiteral) or isinstance(var, SsaBlockReference)
+							if isinstance(var, SsaBlockReference):
+								resolved.append(var)
+							else:
+								resolved.append(SsaBlockReference(var.value))
+								ref_id = variable_lookups.resolve_variable(i.variable)
+								assert isinstance(ref_id.value, SsaVariablesLiteral)
 								ref_id.value = SsaBlockReference(ref_id.value.value)
 						ssa_block.add_instruction(DynamicJumpInstruction(arguments=[vars[0]], target_blocks=resolved))
 					else:
@@ -768,7 +918,6 @@ class SsaProgramBuilder:
 				ssa_block.add_instruction(StopInstruction())
 
 			blocks.append(ssa_block)
-			ssa_blocks[ssa_block.id] = ssa_block
 
 		for block in blocks:
 			ops = []

@@ -10,9 +10,7 @@ DEFAULT_OPTIMIZATION_LEVEL = OptimizationLevel.default()
 NO_OPTIMIZATION = OptimizationLevel.NONE
 
 
-def compile_venom(
-	venom_source, optimization_level: OptimizationLevel = OptimizationLevel.default()
-):
+def compile_venom(venom_source, optimization_level: OptimizationLevel = OptimizationLevel.default()):
 	ctx = parse_venom(venom_source)
 	check_venom_ctx(ctx)
 	run_passes_on(ctx, optimization_level)

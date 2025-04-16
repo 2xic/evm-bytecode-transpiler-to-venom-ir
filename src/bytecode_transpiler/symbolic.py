@@ -34,9 +34,7 @@ class ProgramTrace:
 
 	def fork(self, current: Optional[ExecutionTrace]):
 		# Each time there is a conditional block we need to fork the trace.
-		self.traces.append(
-			ExecutionTrace(deepcopy(current.blocks) if current is not None else [])
-		)
+		self.traces.append(ExecutionTrace(deepcopy(current.blocks) if current is not None else []))
 		return self.traces[-1]
 
 
@@ -87,9 +85,7 @@ class SymbolicAndOpcode(SymbolicOpcode):
 
 	def constant_fold(self):
 		[a, b] = self.inputs
-		return ConstantValue(
-			-1, a.constant_fold().value & b.constant_fold().value, None
-		)
+		return ConstantValue(-1, a.constant_fold().value & b.constant_fold().value, None)
 
 
 class ConstantValue(SymbolicValue):

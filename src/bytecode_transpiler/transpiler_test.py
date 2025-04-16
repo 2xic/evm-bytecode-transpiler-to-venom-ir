@@ -14,7 +14,6 @@ from test_utils.bytecodes import (
 	ERC4626_RRATE_PROVIDER,
 	ERC721_DROP,
 	SINGLE_BLOCK,
-	PC_INVALID_JUMP,
 	GLOBAL_JUMP,
 	INLINE_CALLS,
 	INVALID_OPCODE,
@@ -43,9 +42,7 @@ def test_simple_hello_world():
 	}
 	"""
 	output = SolcCompiler().compile(code)
-	transpiled = compile_venom(
-		get_ssa_program(output).process().convert_into_vyper_ir()
-	)
+	transpiled = compile_venom(get_ssa_program(output).process().convert_into_vyper_ir())
 
 	assert execute_evm(
 		output,
@@ -69,9 +66,7 @@ def test_simple_multiple_functions(solc_version):
 	}
 	"""
 	output = SolcCompiler().compile(code, CompilerSettings(solc_version=solc_version))
-	transpiled = compile_venom(
-		get_ssa_program(output).process().convert_into_vyper_ir()
-	)
+	transpiled = compile_venom(get_ssa_program(output).process().convert_into_vyper_ir())
 
 	assert execute_evm(
 		output,
@@ -470,23 +465,17 @@ def test_unchcked_math():
 	assert execute_evm(
 		bytecode,
 		transpiled,
-		encode_function_call(
-			"add(uint256,uin256)", types=["uint256", "uint256"], values=[1, 1]
-		),
+		encode_function_call("add(uint256,uin256)", types=["uint256", "uint256"], values=[1, 1]),
 	)
 	assert execute_evm(
 		bytecode,
 		transpiled,
-		encode_function_call(
-			"sub(uint256,uin256)", types=["uint256", "uint256"], values=[1, 1]
-		),
+		encode_function_call("sub(uint256,uin256)", types=["uint256", "uint256"], values=[1, 1]),
 	)
 	assert execute_evm(
 		bytecode,
 		transpiled,
-		encode_function_call(
-			"sumOfCubes(uint256,uin256)", types=["uint256", "uint256"], values=[1, 1]
-		),
+		encode_function_call("sumOfCubes(uint256,uin256)", types=["uint256", "uint256"], values=[1, 1]),
 	)
 
 
@@ -723,9 +712,7 @@ def test_should_handle_sstore_optimized():
 		}
 	}
 	"""
-	bytecode = SolcCompiler().compile(
-		code, CompilerSettings().optimize(optimization_runs=2**31 - 1)
-	)
+	bytecode = SolcCompiler().compile(code, CompilerSettings().optimize(optimization_runs=2**31 - 1))
 	output = get_ssa_program(bytecode)
 	output.process()
 	assert output.has_unresolved_blocks is False

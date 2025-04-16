@@ -39,6 +39,7 @@ class SolcCompiler:
 		solcx.install_solc(settings.solc_version)
 		request = self._get_standard_json(
 			file_content,
+			settings,
 		)
 		return solcx.compile_standard(
 			request,
@@ -71,11 +72,7 @@ class SolcCompiler:
 				"metadata": {
 					**({"appendCBOR": False} if "0.8" in settings.solc_version else {}),
 				},
-				**(
-					{"evmVersion": settings.evm_version}
-					if settings.evm_version is not None
-					else {}
-				),
+				**({"evmVersion": settings.evm_version} if settings.evm_version is not None else {}),
 				"optimizer": {
 					"enabled": settings.optimizer_enabled,
 					"runs": settings.optimization_runs,

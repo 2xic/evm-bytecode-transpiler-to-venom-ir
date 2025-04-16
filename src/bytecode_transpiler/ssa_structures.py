@@ -16,6 +16,9 @@ from bytecode_transpiler.ssa_basic_blocks import (
 	PhiEdge,
 	PhiFunction,
 )
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 IRRELEVANT_SSA_OPCODES = ["JUMPDEST", "SWAP", "DUP", "JUMPDEST", "POP", "PUSH"]
 JUMP_OPCODE = "JUMP"
@@ -76,9 +79,7 @@ class Instruction:
 @dataclass
 class PhiInstruction(Instruction):
 	def __eq__(self, value):
-		return isinstance(value, PhiInstruction) and str(
-			value.resolved_arguments
-		) == str(self.resolved_arguments)
+		return isinstance(value, PhiInstruction) and str(value.resolved_arguments) == str(self.resolved_arguments)
 
 
 @dataclass
@@ -119,10 +120,7 @@ class Opcode:
 
 		if len(self.instruction.arguments) == 0:
 			return False
-		if (
-			not len(self.instruction.arguments) > 0
-			and len(self.instruction.arg_count) > 0
-		):
+		if not len(self.instruction.arguments) > 0 and len(self.instruction.arg_count) > 0:
 			return False
 		if self.instruction.resolved_arguments is None:
 			return True
@@ -166,15 +164,11 @@ class Opcode:
 		)
 
 	@classmethod
-	def create_phi_opcode(
-		self, phi_function_operands: PhiFunction, phi_functions_counter: int
-	):
+	def create_phi_opcode(self, phi_function_operands: PhiFunction, phi_functions_counter: int):
 		return Opcode.create_opcode(
 			"phi",
 			variable_name=f"phi{phi_functions_counter}",
-			resolved_arguments=Arguments(
-				values=phi_function_operands.edge, parent_block_id=None, traces=[]
-			),
+			resolved_arguments=Arguments(values=phi_function_operands.edge, parent_block_id=None, traces=[]),
 			class_instr=PhiInstruction,
 		)
 
@@ -230,9 +224,7 @@ class PhiBlockResolver:
 				phi_func = Opcode.create_phi_opcode(phi_functions, phi_value)
 				# Don't create a new variable unless it's needed
 				# TODO: also add a test for this case.
-				phi_func_exists = has_preceding_instr(
-					parent_block, phi_func.instruction
-				)
+				phi_func_exists = has_preceding_instr(parent_block, phi_func.instruction)
 				if phi_func_exists is not None:
 					phi_func_exists = phi_func_exists.variable_name
 					resolved_arguments.append(VyperVarRef(ref=phi_func_exists))
@@ -243,10 +235,7 @@ class PhiBlockResolver:
 					resolved_arguments.append(VyperPhiRef(ref=phi_value))
 
 				if op.instruction.name == JUMP_OPCODE:
-					resolved_arguments += [
-						VyperBlock(v.values[argument].id.value)
-						for v in instruction_args
-					]
+					resolved_arguments += [VyperBlock(v.values[argument].id.value) for v in instruction_args]
 		return resolved_arguments
 
 	def _resolve_phi_functions(
@@ -421,21 +410,13 @@ class SsaBlock:
 						current_block=self,
 						all_block=blocks,
 					)
-					opcode.instruction.resolved_arguments = (
-						Arguments.create_resolved_arguments(resolved_arguments)
-					)
+					opcode.instruction.resolved_arguments = Arguments.create_resolved_arguments(resolved_arguments)
 				else:
 					prev = self.find_relevant_split_node(
 						opcode.instruction.arguments,
 						blocks,
 						is_jump=is_jump,
 					)
-					if is_jump:
-						print(
-							"Needed a phi function ?",
-							len(program_trace.get_block_traces(self.id)),
-							hex(self.id),
-						)
 					if prev is not None:
 						resolved_arguments = resolver.handle_resolve_arguments(
 							opcode,
@@ -443,9 +424,7 @@ class SsaBlock:
 							current_block=self,
 							all_block=blocks,
 						)
-						opcode.instruction.resolved_arguments = (
-							Arguments.create_resolved_arguments(resolved_arguments)
-						)
+						opcode.instruction.resolved_arguments = Arguments.create_resolved_arguments(resolved_arguments)
 
 		return self
 
@@ -466,11 +445,7 @@ class SsaBlock:
 				entries = entries.union(i.traces)
 			parent_block_ids.add(i.parent_block_id)
 
-		if (
-			is_jump
-			and len(parent_block_ids) == 1
-			and len(arguments) == len(blocks[parent_block_ids[0]].incoming)
-		):
+		if is_jump and len(parent_block_ids) == 1 and len(arguments) == len(blocks[parent_block_ids[0]].incoming):
 			return parent_block_ids[0]
 
 		if is_jump:
@@ -478,12 +453,7 @@ class SsaBlock:
 			prev = None
 			while True:
 				current = OrderedSet(
-					[
-						arg_trace.traces[index]
-						if index < len(arg_trace.traces)
-						else None
-						for arg_trace in arguments
-					]
+					[arg_trace.traces[index] if index < len(arg_trace.traces) else None for arg_trace in arguments]
 				)
 				if None in current:
 					break
@@ -526,9 +496,7 @@ class SsaBlock:
 				)
 				and isinstance(self.preceding_opcodes[0].instruction, PhiInstruction)
 			):
-				edges: List[PhiEdge] = self.preceding_opcodes[
-					0
-				].instruction.resolved_arguments.values
+				edges: List[PhiEdge] = self.preceding_opcodes[0].instruction.resolved_arguments.values
 				for trace_id in edges:
 					assert isinstance(trace_id.value, VyperBlockRef)
 					if self.id not in lookup[trace_id.block].outgoing:
@@ -547,13 +515,11 @@ class SsaBlock:
 							None,
 						)
 					)
-					print("I removed a node ")
+					logging.debug("I removed a node ")
 				return True
 		return False
 
-	def remove_redundant_djmp_entries(
-		self, lookup: Dict[int, "SsaBlock"], program_trace: ProgramTrace
-	):
+	def remove_redundant_djmp_entries(self, lookup: Dict[int, "SsaBlock"], program_trace: ProgramTrace):
 		# TODO: This can be improved by looking at the history of the calls.
 		# 		If the basic block has already been visited then it will have it's value registered.
 		if (
@@ -600,14 +566,11 @@ class SsaBlock:
 									test_block = list(
 										map(
 											lambda x: x.instruction.resolved_arguments.values
-											if x.instruction.resolved_arguments
-											is not None
+											if x.instruction.resolved_arguments is not None
 											else "",
 											(
 												lookup[remaining_blocks].opcodes
-												+ lookup[
-													remaining_blocks
-												].preceding_opcodes
+												+ lookup[remaining_blocks].preceding_opcodes
 											),
 										)
 									)
@@ -622,14 +585,10 @@ class SsaBlock:
 
 								# Cleanup
 								# 1. Remove it from the phi node
-								for (
-									trace_id
-								) in phi_instr.instruction.resolved_arguments.values:
+								for trace_id in phi_instr.instruction.resolved_arguments.values:
 									assert isinstance(trace_id, PhiEdge)
 									if trace_id.block == self.id:
-										phi_instr.instruction.resolved_arguments.values.remove(
-											trace_id
-										)
+										phi_instr.instruction.resolved_arguments.values.remove(trace_id)
 										break
 								# 2. Remove the dynamic jump from the phi djmp.
 								for trace_id in arguments.values[1:]:
@@ -638,9 +597,7 @@ class SsaBlock:
 										arguments.values.remove(trace_id)
 										break
 
-								self.opcodes[-1].instruction.resolved_arguments.values[
-									0
-								] = Block(
+								self.opcodes[-1].instruction.resolved_arguments.values[0] = Block(
 									ConstantValue(
 										-1,
 										new_target_block,
@@ -718,9 +675,7 @@ class SsaBlock:
 				if target_variable not in phi_block_resolver.phi_block_usage:
 					return None
 				references = None
-				new_target_block = phi_block_resolver.phi_block_usage[target_variable][
-					0
-				]
+				new_target_block = phi_block_resolver.phi_block_usage[target_variable][0]
 				for op in trace.get_block_traces(self.id):
 					if new_target_block not in op.blocks:
 						continue
@@ -738,9 +693,7 @@ class SsaBlock:
 						references = OrderedSet(ref_arr)
 					else:
 						references = references.union(OrderedSet(ref_arr))
-						assert len(ref_arr) == len(references), (
-							f"{len(ref_arr)} {len(references)}"
-						)
+						assert len(ref_arr) == len(references), f"{len(ref_arr)} {len(references)}"
 				assert references is not None
 				new_phi_edge = []
 				if references is not None:
@@ -749,15 +702,11 @@ class SsaBlock:
 							block[v].preceding_opcodes.append(
 								Opcode.create_opcode(
 									"",
-									resolved_arguments=Arguments(
-										[VyperBlock(0xC)], None, []
-									),
+									resolved_arguments=Arguments([VyperBlock(0xC)], None, []),
 									variable_name=f"UNREACHABLE{hex(v)}",
 								)
 							)
-							new_phi_edge.append(
-								PhiEdge(v, VyperVarRef(f"UNREACHABLE{hex(v)}"))
-							)
+							new_phi_edge.append(PhiEdge(v, VyperVarRef(f"UNREACHABLE{hex(v)}")))
 						else:
 							new_phi_edge.append(
 								PhiEdge(
@@ -768,9 +717,7 @@ class SsaBlock:
 				assert len(new_phi_edge) > 1
 				PHI_VAR_ID = phi_block_resolver.revert_block_id
 				target_block.preceding_opcodes.append(
-					Opcode.create_phi_opcode(
-						PhiFunction(OrderedSet(new_phi_edge)), PHI_VAR_ID
-					)
+					Opcode.create_phi_opcode(PhiFunction(OrderedSet(new_phi_edge)), PHI_VAR_ID)
 				)
 				for i in phi_block_resolver.phi_block_usage[target_variable]:
 					if i not in block:
@@ -779,26 +726,16 @@ class SsaBlock:
 					# # TODO
 					# assert 1 == 2
 					for pre_opcodes in block[i].opcodes:
-						for index, v in enumerate(
-							pre_opcodes.instruction.resolved_arguments.values
-						):
-							if (
-								isinstance(v, VyperPhiRef)
-								and str(v.ref) in target_variable
-							):
-								pre_opcodes.instruction.resolved_arguments.values[
-									index
-								] = VyperPhiRef(PHI_VAR_ID)
+						for index, v in enumerate(pre_opcodes.instruction.resolved_arguments.values):
+							if isinstance(v, VyperPhiRef) and str(v.ref) in target_variable:
+								pre_opcodes.instruction.resolved_arguments.values[index] = VyperPhiRef(PHI_VAR_ID)
 
 	def debug_log_unresolved_arguments(self):
 		unresolved = []
 		for opcode in list(self.opcodes):
 			if opcode.is_unresolved:
 				unresolved.append(str(opcode))
-				args_with_block_id = [
-					[str(x), hex(x.parent_block_id)]
-					for x in opcode.instruction.arguments
-				]
+				args_with_block_id = [[str(x), hex(x.parent_block_id)] for x in opcode.instruction.arguments]
 				args_hashes = [hash(x) for x in opcode.instruction.arguments]
 				unresolved.append(f"\t{args_with_block_id} {args_hashes}")
 				for arg in opcode.instruction.arguments:
@@ -833,9 +770,7 @@ class SsaProgram:
 		for i in self.blocks:
 			if len(i.opcodes) == 1 and i.opcodes[0].instruction.name == "revert":
 				revert_block_id = i.id
-		self.phi_block_resolver = PhiBlockResolver(
-			PhiCounter(0), program_trace, revert_block_id
-		)
+		self.phi_block_resolver = PhiBlockResolver(PhiCounter(0), program_trace, revert_block_id)
 
 	def process(self, options=SsaProgrammingProcessOption()):
 		lookup = {block.id: block for block in self.blocks}
@@ -846,7 +781,7 @@ class SsaProgram:
 		for block in self.blocks:
 			if block.resolve_phi_jump_blocks(lookup):
 				self.blocks.remove(block)
-				print(f"Remove block {block}")
+				logging.debug(f"Removing block: {block.id}")
 		for block in self.blocks:
 			block.remove_redundant_djmp_entries(lookup, self.program_trace)
 
@@ -864,10 +799,10 @@ class SsaProgram:
 		for block in self.blocks:
 			unresolved_info += block.debug_log_unresolved_arguments()
 		if len(unresolved_info) > 0:
-			print("Unresolved instructions: ")
+			logging.debug("Unresolved instructions: ")
 			for i in unresolved_info:
-				print(i)
-			print("[done]")
+				logging.debug(i)
+			logging.debug("[done]")
 		return self
 
 	@property

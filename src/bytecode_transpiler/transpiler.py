@@ -62,9 +62,9 @@ def get_ssa_program(bytecode) -> SsaProgram:
 	visited = defaultdict(int)
 	program_trace = ProgramTrace()
 
-	blocks: List[
-		tuple[BasicBlock, EVM, Optional[SsaBlock], List[int], ExecutionTrace]
-	] = [(blocks_lookup[0], EVM(pc=0), None, [], program_trace.fork(None))]
+	blocks: List[tuple[BasicBlock, EVM, Optional[SsaBlock], List[int], ExecutionTrace]] = [
+		(blocks_lookup[0], EVM(pc=0), None, [], program_trace.fork(None))
+	]
 
 	while len(blocks) > 0:
 		(block, evm, parent, traces, execution_trace) = blocks.pop(0)
@@ -88,9 +88,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 		# Do the opcode execution
 		for index, opcode in enumerate(block.opcodes):
 			is_last_opcode = index == len(block.opcodes) - 1
-			previous_op = (
-				ssa_block.opcodes[index] if index < len(ssa_block.opcodes) else None
-			)
+			previous_op = ssa_block.opcodes[index] if index < len(ssa_block.opcodes) else None
 			if isinstance(opcode, PushOpcode):
 				var = ConstantValue(
 					id=variable_id.get(opcode.pc, variable_counter),
@@ -129,21 +127,13 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				evm.dup(opcode.index)
 				evm.step()
 				ssa_block.opcodes.append(
-					Opcode(
-						instruction=Instruction(
-							name="DUP", resolved_arguments=None, arguments=OrderedSet()
-						)
-					)
+					Opcode(instruction=Instruction(name="DUP", resolved_arguments=None, arguments=OrderedSet()))
 				)
 			elif isinstance(opcode, SwapOpcode):
 				evm.swap(opcode.index)
 				evm.step()
 				ssa_block.opcodes.append(
-					Opcode(
-						instruction=Instruction(
-							name="SWAP", resolved_arguments=None, arguments=OrderedSet()
-						)
-					)
+					Opcode(instruction=Instruction(name="SWAP", resolved_arguments=None, arguments=OrderedSet()))
 				)
 			elif opcode.name == "JUMP":
 				next_offset = evm.pop_item().constant_fold()
@@ -196,10 +186,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				assert isinstance(next_offset, ConstantValue), next_offset
 				next_offset_value = next_offset.value
 				second_offset = opcode.pc + 1
-				if (
-					visited[(parent_id, next_offset_value)] < 10
-					and next_offset_value in blocks_lookup
-				):
+				if visited[(parent_id, next_offset_value)] < 10 and next_offset_value in blocks_lookup:
 					ssa_block.outgoing.add(next_offset_value)
 					blocks.append(
 						(
@@ -275,9 +262,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 						"PC": SymbolicPcOpcode,
 						"AND": SymbolicAndOpcode,
 					}
-					opcode_constructor = opcodes.get(
-						opcode.name.upper(), SymbolicOpcode
-					)
+					opcode_constructor = opcodes.get(opcode.name.upper(), SymbolicOpcode)
 					evm.stack.append(
 						opcode_constructor(
 							id=variable_id.get(opcode.pc, variable_counter),
@@ -306,9 +291,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					ssa_block.opcodes.append(
 						Opcode(
 							instruction=instruction,
-							variable_name=(
-								variable_counter if opcode.outputs > 0 else None
-							),
+							variable_name=(variable_counter if opcode.outputs > 0 else None),
 						)
 					)
 					if opcode.outputs > 0:
@@ -326,9 +309,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 			if is_last_opcode and opcode.name not in END_OF_BLOCK_OPCODES:
 				new_pc = block.id + 1
 				# TODO: remove the need for the for loop.
-				while new_pc not in blocks_lookup and new_pc < max(
-					blocks_lookup.keys()
-				):
+				while new_pc not in blocks_lookup and new_pc < max(blocks_lookup.keys()):
 					new_pc += 1
 				if new_pc in blocks_lookup:
 					blocks.append(
@@ -341,9 +322,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 						)
 					)
 					ssa_block.outgoing.add(new_pc)
-	return SsaProgram(
-		blocks=list(converted_blocks.values()), program_trace=program_trace
-	)
+	return SsaProgram(blocks=list(converted_blocks.values()), program_trace=program_trace)
 
 
 def transpile_from_single_solidity_file(
@@ -353,19 +332,13 @@ def transpile_from_single_solidity_file(
 	generate_output,
 	experimental=False,
 ):
-	optimization_settings = (
-		CompilerSettings().optimize(optimization_runs=2**31 - 1)
-		if via_ir
-		else CompilerSettings()
-	)
+	optimization_settings = CompilerSettings().optimize(optimization_runs=2**31 - 1) if via_ir else CompilerSettings()
 	optimization_settings.deduplicate = True
 	with open(filepath, "r") as file:
 		code = file.read()
 		bytecode = SolcCompiler().compile(code, settings=optimization_settings)
 		print(f"Solc{optimization_settings.solc_version}: {bytecode.hex()}")
-		return transpile_from_bytecode(
-			bytecode, optimization_strategy, generate_output, experimental
-		)
+		return transpile_from_bytecode(bytecode, optimization_strategy, generate_output, experimental)
 
 
 def transpile_from_bytecode(
@@ -409,9 +382,7 @@ def transpile_from_bytecode(
 		with open("output/generated.venom", "w") as file:
 			file.write(output.convert_into_vyper_ir(strict=False))
 
-	results = compile_venom(
-		output.convert_into_vyper_ir(strict=False), optimization_strategy
-	)
+	results = compile_venom(output.convert_into_vyper_ir(strict=False), optimization_strategy)
 	if stats:
 		delta = (len(bytecode) - len(results)) / len(bytecode) * 100
 		print(f"Bytecode size saved {delta}")
