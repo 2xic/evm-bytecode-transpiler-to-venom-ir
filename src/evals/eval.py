@@ -3,12 +3,14 @@ from test_utils.solc_compiler import SolcCompiler, CompilerSettings
 from bytecode_transpiler.transpiler import (
 	transpile_from_bytecode,
 	DEFAULT_OPTIMIZATION_LEVEL,
+	GAS_OPTIMIZATION_LEVEL,
+	CODE_OPTIMIZATION_LEVEL,
 )
 from typing import List
 import matplotlib.pyplot as plt
 from test_utils.abi import encode_function_call
 from test_utils.evm import get_function_gas_usage
-
+from typing import Callable
 import matplotlib
 
 matplotlib.use("Agg")
@@ -236,10 +238,16 @@ tests = [
 		],
 	),
 ]
+
 OPTIMIZATION_RUNS = 2**31 - 1
 
 
-def compile_solidity(contract: str):
+def min_bytecode_size_function(x):
+	assert isinstance(x, bytes)
+	return len(x)
+
+
+def compile_solidity(contract: str, selector: Callable[[bytes], bytes]) -> bytes:
 	solc_bytecode_optimized_via_ir = SolcCompiler().compile(
 		contract, CompilerSettings().optimize(optimization_runs=OPTIMIZATION_RUNS)
 	)
@@ -247,42 +255,42 @@ def compile_solidity(contract: str):
 		contract,
 		CompilerSettings().optimize(optimization_runs=OPTIMIZATION_RUNS, via_ir=False),
 	)
-	return min(
-		[solc_bytecode_optimized_via_ir, solc_bytecode_optimized_no_via_ir],
-		key=lambda x: len(x),
-	)
+	return min([solc_bytecode_optimized_via_ir, solc_bytecode_optimized_no_via_ir], key=selector)
 
 
-def compile_vyper(contract: str):
-	venom_bytecode = transpile_from_bytecode(
-		SolcCompiler().compile(contract),
-		DEFAULT_OPTIMIZATION_LEVEL,
-	)
-	venom_bytecode_optimized_input = transpile_from_bytecode(
-		SolcCompiler().compile(
-			contract,
-			CompilerSettings().optimize(optimization_runs=OPTIMIZATION_RUNS, via_ir=False),
-		),
-		DEFAULT_OPTIMIZATION_LEVEL,
-	)
-	venom_bytecode_optimized_input_via_ir = transpile_from_bytecode(
-		SolcCompiler().compile(
-			contract,
-			CompilerSettings().optimize(optimization_runs=OPTIMIZATION_RUNS),
-		),
-		DEFAULT_OPTIMIZATION_LEVEL,
-	)
-	return min(
-		[
+def compile_vyper(contract: str, selector: Callable[[bytes], bytes]) -> bytes:
+	bytecode = []
+	for i in [DEFAULT_OPTIMIZATION_LEVEL, GAS_OPTIMIZATION_LEVEL, CODE_OPTIMIZATION_LEVEL]:
+		venom_bytecode = transpile_from_bytecode(
+			SolcCompiler().compile(contract),
+			DEFAULT_OPTIMIZATION_LEVEL,
+		)
+		venom_bytecode_optimized_input = transpile_from_bytecode(
+			SolcCompiler().compile(
+				contract,
+				CompilerSettings().optimize(optimization_runs=OPTIMIZATION_RUNS, via_ir=False),
+			),
+			DEFAULT_OPTIMIZATION_LEVEL,
+		)
+		venom_bytecode_optimized_input_via_ir = transpile_from_bytecode(
+			SolcCompiler().compile(
+				contract,
+				CompilerSettings().optimize(optimization_runs=OPTIMIZATION_RUNS),
+			),
+			DEFAULT_OPTIMIZATION_LEVEL,
+		)
+		bytecode += [
 			venom_bytecode,
 			venom_bytecode_optimized_input,
 			venom_bytecode_optimized_input_via_ir,
-		],
-		key=lambda x: len(x),
+		]
+	return min(
+		bytecode,
+		key=selector,
 	)
 
 
-def plot_bytecode_size(bytecode_sizes: List[Results]):
+def plot_bytecode_size(bytecode_sizes: List[Results], prefix: str):
 	x = list(range(len(bytecode_sizes)))
 	programs = [i.id for i in bytecode_sizes]
 	width = 0.35
@@ -312,11 +320,11 @@ def plot_bytecode_size(bytecode_sizes: List[Results]):
 	ax.axhline(y=0, color="black", linestyle="-", linewidth=1)
 
 	plt.tight_layout()
-	plt.savefig("readme/bytecode_sizes.png")
+	plt.savefig(f"readme/{prefix}_bytecode_size.png")
 	plt.close("all")
 
 
-def plot_gas_usage(gas_data: List[tuple[str, List[Results]]]):
+def plot_gas_usage(gas_data: List[tuple[str, List[Results]]], prefix: str):
 	all_funcs = []
 	gas_vyper = []
 
@@ -349,38 +357,78 @@ def plot_gas_usage(gas_data: List[tuple[str, List[Results]]]):
 	ax.axhline(y=0, color="black", linestyle="-", linewidth=1)
 
 	plt.tight_layout()
-	plt.savefig("readme/gas_usage.png")
+	plt.savefig(f"readme/{prefix}_gas_usage.png")
 	plt.close("all")
 
 
-def run_eval(plot):
+def evaluate_solc_vyper(best_vyper_bytecode, best_solc_bytecode, contract: TestCase):
+	assert type(best_vyper_bytecode) is type(best_solc_bytecode)
+
+	function_gas_usage = []
+	for func in contract.function_calls:
+		function_gas_usage.append(
+			Results(
+				id=func.name,
+				vyper=get_function_gas_usage(best_vyper_bytecode, func.encoded),
+				solc=get_function_gas_usage(best_solc_bytecode, func.encoded),
+			)
+		)
+
+	gas_usage = (contract.name, function_gas_usage)
+	bytecode_size = Results(
+		id=contract.name,
+		vyper=len(best_vyper_bytecode),
+		solc=len(best_solc_bytecode),
+	)
+	return bytecode_size, gas_usage
+
+
+def run_min_bytecode_eval(plot):
+	prefix = "min_bytecode_size"
 	bytecode_sizes = []
 	gas_usage = []
 	for contract in tests:
-		best_solc_bytecode = compile_solidity(contract.contract)
-		best_vyper_bytecode = compile_vyper(contract.contract)
-		assert type(best_vyper_bytecode) is type(best_solc_bytecode)
-		bytecode_sizes.append(
-			Results(
-				id=contract.name,
-				vyper=len(best_vyper_bytecode),
-				solc=len(best_solc_bytecode),
-			)
-		)
-		function_gas_usage = []
-		for func in contract.function_calls:
-			function_gas_usage.append(
-				Results(
-					id=func.name,
-					vyper=get_function_gas_usage(best_vyper_bytecode, func.encoded),
-					solc=get_function_gas_usage(best_solc_bytecode, func.encoded),
-				)
-			)
-		gas_usage.append((contract.name, function_gas_usage))
+		best_solc_bytecode = compile_solidity(contract.contract, min_bytecode_size_function)
+		best_vyper_bytecode = compile_vyper(contract.contract, min_bytecode_size_function)
+		(size, gas) = evaluate_solc_vyper(best_vyper_bytecode, best_solc_bytecode, contract)
+		bytecode_sizes.append(size)
+		gas_usage.append(gas)
+
 	if plot:
-		plot_bytecode_size(bytecode_sizes)
-		plot_gas_usage(gas_usage)
+		plot_bytecode_size(bytecode_sizes, prefix)
+		plot_gas_usage(gas_usage, prefix)
 		print("Saved plots")
+
+
+def run_min_gas_eval(plot):
+	prefix = "min_gas_size"
+	bytecode_sizes = []
+	gas_usage = []
+	for contract in tests:
+
+		def min_gas_function(x):
+			assert isinstance(x, bytes)
+			value = 0
+			for func in contract.function_calls:
+				value += get_function_gas_usage(x, func.encoded)
+			return value
+
+		best_solc_bytecode = compile_solidity(contract.contract, min_gas_function)
+		best_vyper_bytecode = compile_vyper(contract.contract, min_gas_function)
+
+		(size, gas) = evaluate_solc_vyper(best_vyper_bytecode, best_solc_bytecode, contract)
+		bytecode_sizes.append(size)
+		gas_usage.append(gas)
+
+	if plot:
+		plot_bytecode_size(bytecode_sizes, prefix)
+		plot_gas_usage(gas_usage, prefix)
+		print("Saved plots")
+
+
+def run_eval(plot):
+	run_min_bytecode_eval(plot)
+	run_min_gas_eval(plot)
 
 
 if __name__ == "__main__":

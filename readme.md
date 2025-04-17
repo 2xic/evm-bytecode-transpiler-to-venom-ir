@@ -1,23 +1,39 @@
 # (wip) bytecode venom transpiler
-**_Currently VERY limited support, it shows some signs of life_**
-
-![It ain't much, but it's honest work](https://web.archive.org/web/20250416232244if_/https://static.wixstatic.com/media/e8b097_8fda4e0a85f84445b6c80bf631baa0b3~mv2.jpeg/v1/fill/w_700,h_464,al_c,q_80,usm_0.66_1.00_0.01,enc_avif,quality_auto/e8b097_8fda4e0a85f84445b6c80bf631baa0b3~mv2.jpeg)
+**_Currently VERY limited support, it's mostly a proof of concept at this point_**
 
 ## Motivation
-I was working on my own compiler alternative to Solidity during the autumn of 2024, but didn't have time to fully prioritize it and then lost some interest in it. During Christmas Holidays I saw this tweet from one of the [Vyper and Venom developers](https://x.com/harkal/status/1870054989990666584) where he teased something like this, but it never got spoken about again and so I got curious to implement it myself.
+I was working on my own compiler alternative to Solidity during the autumn of 2024, but didn't have time to fully prioritize it and then lost some interest in it. During Christmas Holidays I saw [this tweet](https://x.com/harkal/status/1870054989990666584) whcih showcased something like this, but it never wasn't published afaik and so I got curious to implement it myself.
 
 ## Known issues
-- The main running code is not well organized, I started on a [v2](./src/v2/), but it also has some problems. This has been a "compromise" while trying to figure out the best way to solve for the phi issue.
-- The placement of phi functions is not fully implemented and also not fully working. There is some basic support.
-- There will be edges cases in case of `CODECOPY` and other memory realted opcodes which we don't correctly cover. We don't model model memory or storage atm which could cause incorrect transpiled code.
+- The main running code is not well organized, I started on a [v2](./src/v2/), but it has less support atm. This has been a "compromise" I did while trying to figure out the best way to solve for the phi placmeent problem.
+- **The placement of phi functions is not fully implemented and also not fully working. There is some basic support, depending on the control flow of your contract it might not be able to compile.**
+- There will be edges cases in case of `CODECOPY` and other memory realted opcodes which we don't correctly cover. We don't model model memory or storage atm which could cause incorrect transpiled code. In other words, you can't expect to optimize for instance deployment code currently. Only runtimecode, but it also has it's edgecases.
+
+## High level how it works
+1. We execute the contract symbolically
+2. We look at the exectuion traces to know how variables were used
+3. We place phi nodes if multiple variables were used or there was a split in the execution flow.
+
+One thing we don't have, but which would be useful for solving our phi plaement logic is for us to be able to more closely identify the variables. Currently we aren't able to unify different execution paths and therefore two different execution paths can result in two different variables being crated when in reality they are versions of the same variable.
 
 
 ## Evals
-The script used to generate these are in [evals](./src/evals/eval.py). 
+The script used to generate these are in [evals](./src/evals/eval.py). All of these contracts are very basic and don't really reflect existing smart contracts (ERC20s, etc), that said it still gives some perspective. 
 
-![bytecode sizes](./readme/bytecode_sizes.png)
+### Optimizing for smallest bytecode size
+For each compiler, we run the compilation at various configs and select the output from each compiler with the smallest bytecode. Then we compare the solc size and gas usage against vyper. 
 
-![gas usage](./readme/gas_usage.png)
+![bytecode sizes](./readme/min_bytecode_size_bytecode_size.png)
+
+![gas usage](./readme/min_bytecode_size_gas_usage.png)
+
+### Optimizing for loweest gas usage
+For each compiler, we run the compilation at the same configs as above and select the output from each compiler with the smallest total __gas__ usage. Then we compare the solc size and gas usage against vyper. 
+
+![bytecode sizes](./readme/min_gas_size_bytecode_size.png)
+
+![gas usage](./readme/min_gas_size_gas_usage.png)
+
 
 ## Example
 First install what you need to run this

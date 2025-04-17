@@ -1,5 +1,25 @@
 import solcx
 from dataclasses import dataclass
+import cbor2
+
+
+def strip_metadata(bytecode: bytes):
+	metadata_length = int.from_bytes(bytecode[-2:], byteorder="big")
+
+	if metadata_length > 0 and metadata_length <= len(bytecode):
+		metadata_end = len(bytecode) - 2
+		metadata_start = metadata_end - (metadata_length - 2)
+		if metadata_start < 0:
+			return bytecode
+
+		potential_metadata = bytecode[metadata_start:metadata_end]
+
+		try:
+			cbor2.loads(potential_metadata)
+			return bytecode[: len(bytecode) - metadata_length]
+		except (cbor2.CBORDecodeError, ValueError):
+			pass
+	return bytecode
 
 
 @dataclass
@@ -7,8 +27,6 @@ class CompilerSettings:
 	via_ir: bool = False
 	optimizer_enabled: bool = False
 	optimization_runs: int = 200
-	deduplicate: bool = False
-	evm_version: str = None
 	solc_version: str = "0.8.28"
 
 	def optimize(self, optimization_runs=200, via_ir=True):
@@ -63,23 +81,16 @@ class SolcCompiler:
 				"outputSelection": {
 					"*": {
 						"*": [
+							# Used by the yul compilation
 							"evm.bytecode.object",
 							"evm.deployedBytecode.object",
 							"irOptimized",
 						],
 					}
 				},
-				"metadata": {
-					**({"appendCBOR": False} if "0.8" in settings.solc_version else {}),
-				},
-				**({"evmVersion": settings.evm_version} if settings.evm_version is not None else {}),
 				"optimizer": {
 					"enabled": settings.optimizer_enabled,
 					"runs": settings.optimization_runs,
-					"details": {
-						# Causes a lot of phi function to be needed
-						"deduplicate": False,
-					},
 				},
 				"viaIR": settings.via_ir,
 			},
@@ -91,5 +102,5 @@ class SolcCompiler:
 			ref = solc[i]["evm"][key]["object"]
 			code = bytes.fromhex(ref)
 			if len(code) > 0:
-				return code
+				return strip_metadata(code)
 		return None

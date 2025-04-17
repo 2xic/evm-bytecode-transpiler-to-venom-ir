@@ -6,9 +6,9 @@ import os
 import requests
 from dotenv import load_dotenv
 from bytecode_transpiler.transpiler import transpile_from_bytecode
+from src.test_utils.solc_compiler import strip_metadata
 import json
 import time
-import cbor2
 
 load_dotenv()
 
@@ -27,31 +27,11 @@ class Cache:
 
 	def put(self, name, response):
 		path = self.path(name)
-		print(path)
 		with open(path, "w") as file:
 			file.write(json.dumps(response, indent=4))
 
 	def path(self, name):
 		return os.path.join(os.path.dirname(__file__), "../", ".cache", name)
-
-
-def strip_metadata(bytecode: bytes):
-	metadata_length = int.from_bytes(bytecode[-2:], byteorder="big")
-
-	if metadata_length > 0 and metadata_length <= len(bytecode):
-		metadata_end = len(bytecode) - 2
-		metadata_start = metadata_end - (metadata_length - 2)
-		if metadata_start < 0:
-			return bytecode
-
-		potential_metadata = bytecode[metadata_start:metadata_end]
-
-		try:
-			cbor2.loads(potential_metadata)
-			return bytecode[: len(bytecode) - metadata_length]
-		except (cbor2.CBORDecodeError, ValueError):
-			pass
-	return bytecode
 
 
 cache = Cache()

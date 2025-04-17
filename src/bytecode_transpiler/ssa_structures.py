@@ -267,7 +267,7 @@ class PhiBlockResolver:
 				)
 			elif isinstance(var_value, ConstantValue):
 				"""
-				This block id, might not be the correct one.
+				TODO: This block id, might not be the correct one.
 				"""
 				if var_value.block == current_block.id:
 					phi_function.add_edge(PhiEdge(None, mapper(var_value)))
@@ -304,8 +304,10 @@ class PhiBlockResolver:
 		current_block: "SsaBlock",
 	):
 		"""
-		1. Check if the variable is in the same bloc
-		2. Lookup the outgoing blocks from where variable was defined until an outgoing node is found that goes into the current lbock
+		1. Check if the variable is in the same block
+		2. Lookup the outgoing blocks from where variable was defined until an outgoing node is found that goes into the current block
+
+		(note: this isn't fully correct as this logic need to be recursive to handle splitting points)
 		"""
 		queue = [var_block_id]
 		if var_block_id == current_block.id:
@@ -679,7 +681,6 @@ class SsaBlock:
 				for op in trace.get_block_traces(self.id):
 					if new_target_block not in op.blocks:
 						continue
-					print(op)
 				# TODO: Now we need to follow the block trace until we find the usage of the phi node and then backtrace to create the split node.
 				for op in trace.get_block_traces(self.id):
 					if new_target_block not in op.blocks:
@@ -722,9 +723,7 @@ class SsaBlock:
 				for i in phi_block_resolver.phi_block_usage[target_variable]:
 					if i not in block:
 						continue
-					# for pre_opcodes in block[i].preceding_opcodes:
-					# # TODO
-					# assert 1 == 2
+
 					for pre_opcodes in block[i].opcodes:
 						for index, v in enumerate(pre_opcodes.instruction.resolved_arguments.values):
 							if isinstance(v, VyperPhiRef) and str(v.ref) in target_variable:

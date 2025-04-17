@@ -1,5 +1,5 @@
 """
-We need a small symbolic EVM to be able to handle the lookups
+We need a small symbolic EVM to be able to resolve the program execution flow
 """
 
 from copy import deepcopy

@@ -65,6 +65,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 	blocks: List[tuple[BasicBlock, EVM, Optional[SsaBlock], List[int], ExecutionTrace]] = [
 		(blocks_lookup[0], EVM(pc=0), None, [], program_trace.fork(None))
 	]
+	MAX_VISIT_COUNT = 10
 
 	while len(blocks) > 0:
 		(block, evm, parent, traces, execution_trace) = blocks.pop(0)
@@ -140,7 +141,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				assert isinstance(next_offset, ConstantValue), next_offset
 				next_offset_value = next_offset.value
 
-				if visited[(parent_id, next_offset_value)] < 10:
+				if visited[(parent_id, next_offset_value)] < MAX_VISIT_COUNT:
 					visited[next_offset] += 1
 					blocks.append(
 						(
@@ -186,7 +187,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 				assert isinstance(next_offset, ConstantValue), next_offset
 				next_offset_value = next_offset.value
 				second_offset = opcode.pc + 1
-				if visited[(parent_id, next_offset_value)] < 10 and next_offset_value in blocks_lookup:
+				if visited[(parent_id, next_offset_value)] < MAX_VISIT_COUNT and next_offset_value in blocks_lookup:
 					ssa_block.outgoing.add(next_offset_value)
 					blocks.append(
 						(
@@ -209,7 +210,7 @@ def get_ssa_program(bytecode) -> SsaProgram:
 					)
 
 				# THe false jump
-				if visited[(parent_id, second_offset)] < 10 and second_offset:
+				if visited[(parent_id, second_offset)] < MAX_VISIT_COUNT and second_offset:
 					blocks.append(
 						(
 							blocks_lookup[second_offset],

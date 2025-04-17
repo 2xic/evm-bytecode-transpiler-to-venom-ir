@@ -161,7 +161,6 @@ def test_basic_for_loop():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
-	# output_block.create_plot()
 	print(str(output_block))
 	assert are_equal_ignoring_spaces(
 		"""
@@ -364,7 +363,6 @@ def test_should_handle_phi_djmps():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
-	# output_block.create_plot()
 	code = output_block.compile()
 	assert isinstance(code, bytes)
 
@@ -434,7 +432,6 @@ def test_send_eth():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
-	output_block.create_plot()
 	print(output_block.convert_to_vyper_ir())
 	code = output_block.compile()
 	assert isinstance(code, bytes)
@@ -461,7 +458,6 @@ def test_assembly_variable():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
-	# output_block.create_plot()
 	code = output_block.compile()
 	assert isinstance(code, bytes)
 
@@ -483,6 +479,5 @@ def test_multiple_functions():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
-	output_block.create_plot()
 	code = output_block.compile()
 	assert isinstance(code, bytes)

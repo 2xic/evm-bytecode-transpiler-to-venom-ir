@@ -158,9 +158,9 @@ INVALID_OPCODE = 0xFE
 def get_opcodes_from_bytes(bytecode):
 	opcodes = build_opcodes_table()
 	outputs = []
-	instruction_pointer = 0
-	while instruction_pointer < len(bytecode):
-		opcode = opcodes.get(bytecode[instruction_pointer], opcodes[INVALID_OPCODE])
+	pc = 0
+	while pc < len(bytecode):
+		opcode = opcodes.get(bytecode[pc], opcodes[INVALID_OPCODE])
 		if "PUSH" in opcode["name"]:
 			size = opcode["opcode"] - 0x5F
 			if size == 0:
@@ -169,22 +169,22 @@ def get_opcodes_from_bytes(bytecode):
 						opcode["name"],
 						opcode["inputs"],
 						opcode["outputs"],
-						instruction_pointer,
+						pc,
 						bytes(1),
 					)
 				)
 			else:
-				data = bytecode[instruction_pointer + 1 : instruction_pointer + 1 + size]
+				data = bytecode[pc + 1 : pc + 1 + size]
 				outputs.append(
 					PushOpcode(
 						opcode["name"],
 						opcode["inputs"],
 						opcode["outputs"],
-						instruction_pointer,
+						pc,
 						data,
 					)
 				)
-			instruction_pointer += size + 1
+			pc += size + 1
 		elif "SWAP" in opcode["name"]:
 			index = opcode["opcode"] - 0x8F
 			outputs.append(
@@ -192,11 +192,11 @@ def get_opcodes_from_bytes(bytecode):
 					opcode["name"],
 					opcode["inputs"],
 					opcode["outputs"],
-					instruction_pointer,
+					pc,
 					index,
 				)
 			)
-			instruction_pointer += 1
+			pc += 1
 		elif "DUP" in opcode["name"]:
 			index = opcode["opcode"] - 0x7F
 			outputs.append(
@@ -204,19 +204,19 @@ def get_opcodes_from_bytes(bytecode):
 					opcode["name"],
 					opcode["inputs"],
 					opcode["outputs"],
-					instruction_pointer,
+					pc,
 					index,
 				)
 			)
-			instruction_pointer += 1
+			pc += 1
 		else:
 			outputs.append(
 				Opcode(
 					opcode["name"],
 					opcode["inputs"],
 					opcode["outputs"],
-					instruction_pointer,
+					pc,
 				)
 			)
-			instruction_pointer += 1
+			pc += 1
 	return outputs

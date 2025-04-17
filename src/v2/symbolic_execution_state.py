@@ -256,6 +256,10 @@ class ProgramExecution:
 			blocks=blocks,
 		).remove_stateless_jumps()
 
+	"""
+	TODO: This might be the wrong place to have this, also worth considering if we should even have these sort of optimizations.
+	"""
+
 	def remove_stateless_jumps(self):
 		# In some cases the compiler will insert a node which just does
 		# In block -> dynamic jump that -> Out block

@@ -1,7 +1,3 @@
-"""
-We need to convert the bytecode into basic blocks so that we can jump between them using the IR
-"""
-
 from dataclasses import dataclass
 from bytecode_transpiler.opcodes import Opcode
 from typing import List, Optional
