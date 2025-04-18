@@ -19,6 +19,7 @@ from ordered_set import OrderedSet
 import graphviz
 from bytecode_transpiler.vyper_compiler import compile_venom
 import struct
+import argparse
 
 """
 One final rewrite.
@@ -453,6 +454,12 @@ class StopInstruction(BaseSsaInstruction):
 
 
 @dataclass
+class InvalidInstruction(BaseSsaInstruction):
+	def __str__(self):
+		return "REVERT 0,0"
+
+
+@dataclass
 class SsaVariable:
 	variable_name: str
 	value: Union[SsaInstruction, SsaVariablesLiteral]
@@ -717,9 +724,13 @@ class SsaBlock:
 	@property
 	def is_terminating(self):
 		return (
-			isinstance(self._instruction[-1], SsaInstruction)
-			and self._instruction[-1].name.strip() in END_OF_BLOCK_OPCODES
-		) or isinstance(self._instruction[-1], DynamicJumpInstruction)
+			(
+				isinstance(self._instruction[-1], SsaInstruction)
+				and self._instruction[-1].name.strip() in END_OF_BLOCK_OPCODES
+			)
+			or isinstance(self._instruction[-1], DynamicJumpInstruction)
+			or isinstance(self._instruction[-1], InvalidInstruction)
+		)
 
 
 @dataclass
@@ -831,7 +842,7 @@ class SsaProgramBuilder:
 				execution = self.execution.execution[op.pc]
 
 				# Check each execution
-				if op.is_push_opcode:  # len(execution) == 1 or
+				if op.is_push_opcode:
 					# Single unique trace, no need to look for phi nodes
 					op = execution[0]
 					ssa_block.add_instruction_from_state(op, variable_lookups)
@@ -912,6 +923,9 @@ class SsaProgramBuilder:
 								assert isinstance(ref_id.value, SsaVariablesLiteral)
 								ref_id.value = SsaBlockReference(ref_id.value.value)
 						ssa_block.add_instruction(DynamicJumpInstruction(arguments=[vars[0]], target_blocks=resolved))
+					elif op.opcode.name == "INVALID":
+						# Invalid is not considering terminating in Vyper so just make it into a revert.
+						ssa_block.add_instruction(InvalidInstruction())
 					else:
 						ssa_block.add_instruction_from_vars(op, vars, variable_lookups)
 
@@ -938,3 +952,25 @@ class SsaProgramBuilder:
 		return SsaProgram(
 			blocks,
 		)
+
+
+def transpile_bytecode(raw_bytecode):
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(raw_bytecode),
+	)
+	output_block = program.create_program()
+	output_block.create_plot()
+	print(output_block.convert_to_vyper_ir())
+	code = output_block.compile()
+	return code
+
+
+if __name__ == "__main__":
+	parser = argparse.ArgumentParser()
+
+	# input source
+	group = parser.add_mutually_exclusive_group(required=True)
+	group.add_argument("--bytecode", type=str, help="Bytecode as a hex string")
+
+	args = parser.parse_args()
+	print(transpile_bytecode(bytes.fromhex(args.bytecode.lstrip("0x"))))

@@ -42,6 +42,7 @@ from bytecode_transpiler.vyper_compiler import (
 	GAS_OPTIMIZATION_LEVEL,
 	DEFAULT_OPTIMIZATION_LEVEL,
 )
+import os
 
 
 def create_new_traces(parent, traces):
@@ -377,6 +378,7 @@ def transpile_from_bytecode(
 				dot.edge(hex(ssa_block.id), hex(edge))
 
 	if generate_output:
+		os.makedirs("output", exist_ok=True)
 		with open("output/program.bin", "w") as file:
 			file.write(bytecode.hex())
 		dot.render("output/ssa", cleanup=True)
@@ -423,6 +425,12 @@ def main():
 		help="Print stats",
 	)
 	parser.add_argument(
+		"--output",
+		default=False,
+		action="store_true",
+		help="Output generated files",
+	)
+	parser.add_argument(
 		"--optimizer",
 		choices=["codesize", "gas", "none"],
 		default="default",
@@ -447,7 +455,7 @@ def main():
 				args.filepath,
 				args.via_ir,
 				optimization_strategy,
-				generate_output=True,
+				generate_output=args.output,
 				experimental=args.experimental,
 			).hex()
 		)
@@ -457,7 +465,7 @@ def main():
 			transpile_from_bytecode(
 				bytecode,
 				optimization_strategy,
-				generate_output=True,
+				generate_output=args.output,
 				experimental=args.experimental,
 				stats=args.stats,
 			).hex()

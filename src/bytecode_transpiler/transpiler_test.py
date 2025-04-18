@@ -27,8 +27,8 @@ solc_versions = [
 
 
 def execute_evm(bytecode_a, bytecode_b, function):
-	out_a = get_function_output(bytecode_a, function)
-	out_b = get_function_output(bytecode_b, function)
+	out_a, _is_success = get_function_output(bytecode_a, function)
+	out_b, _is_success = get_function_output(bytecode_b, function)
 	assert out_a == out_b, f"{out_a} != {out_b} with {function.hex()}"
 	return True
 

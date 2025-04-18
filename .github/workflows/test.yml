@@ -19,15 +19,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
       - name: Run tests
         run: pytest
 
-  eval-check:
-    name: Run Eval and Check for Changes
+  install:
     runs-on: ubuntu-latest
-    if: false # Isn't deterministic, maybe we need to compare against hte raw data instead of png
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -39,17 +38,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-          python -m pip install -e .
+          pip install -r requirements.txt
+          pip install -e .
 
-      - name: Run eval script
-        run: python3.10 src/evals/eval.py
-
-      - name: Check for modified files
+      - name: Run example
         run: |
-          git status --porcelain
-          if [[ -n "$(git status --porcelain)" ]]; then
-            echo "❌ Files were modified after eval. Please run the script locally and commit the results."
-            git diff
-            exit 1
-          fi
+          bytecode_transpiler --optimizer "gas" --bytecode "6080604052600436101561001257600080fd5b60003560e01c63c0734b111461002757600080fd5b3461010d5760007ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc36011261010857600160005b600a82111561006f57602090604051908152f35b8181018091116100d957907fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff81146100aa576001019061005b565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b600080fd5b600080fd"

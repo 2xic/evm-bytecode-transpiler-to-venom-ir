@@ -45,9 +45,10 @@ def run_vm(bytecode: bytes, data: bytes, storage={}, wei_value=0) -> Computation
 	return computation
 
 
-def get_function_output(bytecode: bytes, function: bytes):
-	return run_vm(bytecode, function).output.hex()
+def get_function_output(bytecode: bytes, function: bytes, storage={}):
+	vm = run_vm(bytecode, function, storage)
+	return vm.output.hex(), vm.is_success
 
 
-def get_function_gas_usage(bytecode: bytes, function: bytes):
+def get_function_gas_usage(bytecode: bytes, function: bytes, storage={}):
 	return run_vm(bytecode, function).get_gas_used()

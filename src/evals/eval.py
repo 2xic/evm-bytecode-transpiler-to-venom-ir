@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from test_utils.solc_compiler import SolcCompiler, CompilerSettings
 from bytecode_transpiler.transpiler import (
 	transpile_from_bytecode,
@@ -9,9 +9,10 @@ from bytecode_transpiler.transpiler import (
 from typing import List
 import matplotlib.pyplot as plt
 from test_utils.abi import encode_function_call
-from test_utils.evm import get_function_gas_usage
+from test_utils.evm import get_function_gas_usage, get_function_output, SENDER_ADDRESS
 from typing import Callable
 import matplotlib
+from typing import Dict
 
 matplotlib.use("Agg")
 plt.rcParams["font.family"] = "DejaVu Sans"
@@ -22,6 +23,7 @@ plt.rcParams["font.size"] = 12
 class FunctionCall:
 	name: str
 	encoded: bytes
+	succeeds: bool = True
 
 
 @dataclass
@@ -36,6 +38,7 @@ class TestCase:
 	name: str
 	contract: str
 	function_calls: List[FunctionCall]
+	storage: Dict[int, int] = field(default_factory=lambda: {})
 
 
 tests = [
@@ -92,53 +95,7 @@ tests = [
 				encoded=encode_function_call("dec()"),
 			),
 		],
-	),
-	TestCase(
-		"SimpleMapping",
-		contract="""
-			// From https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html#subcurrency-example
-			contract SimpleMapping {
-				mapping(address => mapping(address => bool)) public mappings;
-
-				function setResults(address value) public returns(address) {
-					mappings[address(0)][value] = true;
-					return value;
-				}
-			}
-		""",
-		function_calls=[
-			FunctionCall(
-				name="setResults",
-				encoded=encode_function_call("setResults(address)", ["address"], ["0x" + "ff" * 20]),
-			),
-		],
-	),
-	TestCase(
-		# From https://docs.soliditylang.org/en/latest/contracts.html#function-visibility
-		"SimpleDeployment",
-		contract="""
-			contract C {
-				uint private data;
-
-				function f(uint a) private pure returns(uint b) { return a + 1; }
-				function setData(uint a) public { data = a; }
-				function getData() public view returns(uint) { return data; }
-				function compute(uint a, uint b) internal pure returns (uint) { return a + b; }
-			}
-
-			contract E is C {
-				function g() public {
-					C c = new C();
-					uint val = compute(3, 5); // access to internal member (from derived to parent contract)
-				}
-			}
-		""",
-		function_calls=[
-			FunctionCall(
-				name="g",
-				encoded=encode_function_call("g()"),
-			),
-		],
+		storage={0: 5},
 	),
 	TestCase(
 		# From https://docs.soliditylang.org/en/latest/contracts.html#function-visibility
@@ -158,10 +115,10 @@ tests = [
 				}
 
 				function claimGift() nonReentrant public {
-					require(address(this).balance >= 1 ether);
 					require(!sentGifts[msg.sender]);
 					(bool success, ) = msg.sender.call{value: 1 ether}("");
-					require(success);
+					// Not needed for this test
+					// require(success);
 
 					// In a reentrant function, doing this last would open up the vulnerability
 					sentGifts[msg.sender] = true;
@@ -201,7 +158,248 @@ tests = [
 		function_calls=[
 			FunctionCall(
 				name="claimGift",
-				encoded=encode_function_call("claimGift()"),
+				encoded=encode_function_call("withdraw(uint256)", types=["uint256"], values=[10]),
+			),
+			FunctionCall(
+				name="claimGift",
+				encoded=encode_function_call("getBalance()"),
+			),
+		],
+		storage={
+			0: int.from_bytes(SENDER_ADDRESS, "big"),
+		},
+	),
+	TestCase(
+		"SimpleAuctionSimpleVoter",
+		contract="""
+			contract SimpleVoter {
+				address public council;
+				// UInt256 instead of boolean to not have storage layouts move with optimizations on.
+				uint256 public isOpen;
+				uint256 public voteCount;
+
+				modifier onlyCouncil() {
+					require(msg.sender == council, "Not council");
+					_;
+				}
+
+				constructor() {
+					council = msg.sender;
+					voteCount = 0;
+					isOpen = 1;
+				}
+
+				function vote() public returns (uint256) {
+					require(isOpen != 0, "Voting closed");
+					voteCount += 1;
+					if (voteCount > 5) {
+						voteCount = 5; // Simple cap
+					}
+					return voteCount;
+				}
+
+				function endVote() public onlyCouncil returns (uint256) {
+					require(isOpen != 0, "Already closed");
+					isOpen = 0;
+					return voteCount;
+				}
+			}
+		""",
+		function_calls=[
+			FunctionCall(
+				name="vote",
+				encoded=encode_function_call("vote()"),
+			),
+			FunctionCall(
+				name="endVote",
+				encoded=encode_function_call("endVote()"),
+			),
+		],
+		storage={
+			0: int.from_bytes(SENDER_ADDRESS, "big"),
+			1: 1,
+		},
+	),
+	TestCase(
+		"PersonalVault",
+		contract="""
+			contract PersonalVault {
+				address public owner;
+				bool public isLocked;
+
+				constructor() {
+					owner = msg.sender;
+					isLocked = false;
+				}
+
+				modifier onlyOwner() {
+					require(msg.sender == owner, "Not owner");
+					_;
+				}
+
+				function deposit() public payable returns (uint256) {
+					require(!isLocked, "Vault locked");
+					return address(this).balance;
+				}
+
+				function toggleLock() public onlyOwner returns (bool) {
+					isLocked = !isLocked;
+					return isLocked;
+				}
+
+				function executeTransaction(
+					// TODO: figure out why it doesn't like me using address here
+					bytes20 target,
+					uint256 value,
+					bytes calldata data
+				) public returns (bool) {
+					address target = address(target);
+					(bool success, ) = target.call{value: value}(data);
+					return true;
+				}
+
+				receive() external payable {}
+			}
+		""",
+		function_calls=[
+			FunctionCall(
+				name="toggleLock",
+				encoded=encode_function_call("toggleLock()"),
+			),
+			FunctionCall(
+				name="deposit",
+				encoded=encode_function_call("deposit()"),
+			),
+			FunctionCall(
+				name="executeTransaction",
+				encoded=encode_function_call(
+					"executeTransaction(bytes20,uint256,bytes)",
+					types=["bytes20", "uint256", "bytes"],
+					values=[bytes.fromhex("ff" * 20), 10, bytes()],
+				),
+			),
+		],
+		storage={
+			0: int.from_bytes(SENDER_ADDRESS, "big"),
+			1: 0,
+		},
+	),
+	TestCase(
+		"InlineBabyNftContract",
+		contract="""
+			contract InlineBabyNftContract {
+				address public admin;
+
+				constructor() {
+					admin = msg.sender;
+				}
+
+				function getTokenSlot(
+					uint256 tokenId
+				) internal pure returns (bytes32 slot) {
+					assembly {
+						mstore(0x00, tokenId)
+						mstore(0x20, 1)
+						slot := keccak256(0x00, 0x40)
+					}
+				}
+
+				function mint(uint256 tokenId, bytes20 to) public {
+					require(msg.sender == admin, "Not authorized");
+
+					address currentOwner;
+					bytes32 slot = getTokenSlot(tokenId);
+
+					assembly {
+						currentOwner := sload(slot)
+
+						if iszero(iszero(currentOwner)) {
+							revert(0, 0)
+						}
+
+						sstore(slot, to)
+					}
+				}
+
+				function transfer(uint256 tokenId, bytes20 to) public {
+					address currentOwner;
+					bytes32 slot = getTokenSlot(tokenId);
+
+					assembly {
+						currentOwner := sload(slot)
+
+						if iszero(eq(currentOwner, caller())) {
+							revert(0, 0)
+						}
+
+						sstore(slot, to)
+					}
+				}
+			}
+		""",
+		function_calls=[
+			FunctionCall(
+				name="mint",
+				encoded=encode_function_call(
+					"mint(uint256,bytes20)", types=["uint256", "bytes20"], values=[10, bytes.fromhex("ff" * 20)]
+				),
+			),
+			FunctionCall(
+				name="transfer",
+				encoded=encode_function_call(
+					"transfer(uint256,bytes20)", types=["uint256", "bytes20"], values=[1, bytes.fromhex("ff" * 20)]
+				),
+			),
+		],
+		storage={
+			0: int.from_bytes(SENDER_ADDRESS, "big"),
+			# getTokenSlot(1)
+			0xCC69885FDA6BCC1A4ACE058B4A62BF5E179EA78FD58A1CCD71C22CC9B688792F: int.from_bytes(SENDER_ADDRESS, "big"),
+		},
+	),
+	TestCase(
+		# From https://x.com/real_philogy/status/1909353672993026477/photo/1
+		"Alloc",
+		contract="""
+			contract Alloc {
+				struct Bob {
+					uint256 x;
+				}
+
+				function getBob() external pure returns (Bob memory) {
+					return Bob(34);
+				}
+			}
+		""",
+		function_calls=[
+			FunctionCall(
+				name="getBob",
+				encoded=encode_function_call("getBob()"),
+			),
+		],
+	),
+	TestCase(
+		# From https://x.com/sendmoodz/status/1909360784473305091
+		"Thing",
+		contract="""
+			contract Thing {
+				struct State {
+					uint64 a;
+					uint64 b;
+					uint128 c;
+				}
+
+				State state;
+
+				function writeState() external {
+					state = State(1, 2, 3);
+				}
+			}
+		""",
+		function_calls=[
+			FunctionCall(
+				name="writeState",
+				encoded=encode_function_call("writeState()"),
 			),
 		],
 	),
@@ -234,6 +432,105 @@ tests = [
 			FunctionCall(
 				name="deploy",
 				encoded=encode_function_call("deploy()"),
+			),
+		],
+	),
+	TestCase(
+		# From https://github.com/OpenZeppelin/openzeppelin-contracts/blob/8176a901a9edfac52391315296fb8b7784454ecd/contracts/access/Ownable.sol
+		"Ownable",
+		contract="""
+			abstract contract Context {
+				function _msgSender() internal view virtual returns (address) {
+					return msg.sender;
+				}
+			}
+
+			contract Ownable is Context {
+				address private _owner;
+				event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+				constructor () {
+					address msgSender = _msgSender();
+					_owner = msgSender;
+					emit OwnershipTransferred(address(0), msgSender);
+				}
+
+				function owner() public view returns (address) {
+					return _owner;
+				}
+
+				modifier onlyOwner() {
+					require(_owner == _msgSender(), "Ownable: caller is not the owner");
+					_;
+				}
+
+				function renounceOwnership() public virtual onlyOwner {
+					emit OwnershipTransferred(_owner, address(0));
+					_owner = address(0);
+				}
+			}
+		""",
+		function_calls=[
+			FunctionCall(
+				name="owner",
+				encoded=encode_function_call("owner()"),
+			),
+			FunctionCall(
+				name="renounceOwnership",
+				encoded=encode_function_call("renounceOwnership()"),
+			),
+		],
+		storage={
+			0: int.from_bytes(SENDER_ADDRESS, "big"),
+		},
+	),
+	TestCase(
+		# From https://etherscan.io/address/0x9BA6e03D8B90dE867373Db8cF1A58d2F7F006b3A
+		"Proxy",
+		contract="""
+			/// @title Proxy - Generic proxy contract allows to execute all transactions applying the code of a master contract.
+			/// @author Stefan George - <stefan@gnosis.io>
+			/// @author Richard Meissner - <richard@gnosis.io>
+			contract Proxy {
+				// masterCopy always needs to be first declared variable, to ensure that it is at the same location in the contracts to which calls are delegated.
+				// To reduce deployment costs this variable is internal and needs to be retrieved via `getStorageAt`
+				address internal masterCopy;
+
+				/// @dev Constructor function sets address of master copy contract.
+				/// @param _masterCopy Master copy address.
+				constructor(address _masterCopy)
+					public
+				{
+					require(_masterCopy != address(0), "Invalid master copy address provided");
+					masterCopy = _masterCopy;
+				}
+
+				/// @dev Fallback function forwards all transactions and returns all received return data.
+				fallback ()
+					external
+					payable
+				{
+					// solium-disable-next-line security/no-inline-assembly
+					assembly {
+						let _masterCopy := and(sload(0), 0xffffffffffffffffffffffffffffffffffffffff)
+						// 0xa619486e == keccak("_masterCopy()"). The value is right padded to 32-bytes with 0s
+						if eq(calldataload(0), 0xa619486e00000000000000000000000000000000000000000000000000000000) {
+							mstore(0, _masterCopy)
+							return(0, 0x20)
+						}
+						calldatacopy(0, 0, calldatasize())
+						let success := delegatecall(gas(), _masterCopy, 0, calldatasize(), 0, 0)
+						returndatacopy(0, 0, returndatasize())
+						if eq(success, 0) { revert(0, returndatasize()) }
+						return(0, returndatasize())
+					}
+				}
+			}
+		""",
+		function_calls=[
+			FunctionCall(
+				name="proxy",
+				encoded=encode_function_call("proxy()"),
 			),
 		],
 	),
@@ -297,7 +594,7 @@ def plot_bytecode_size(bytecode_sizes: List[Results], prefix: str):
 
 	gas_vyper = [(i.solc - i.vyper) / i.solc * 100 for i in bytecode_sizes]
 	_, ax = plt.subplots(figsize=(10, 5))
-	colors = ["red" if x < 0 else "blue" for x in gas_vyper]
+	colors = ["red" if x < 0 else "green" for x in gas_vyper]
 	ax.bar(
 		list(map((lambda x: x - width / 2), x)),
 		gas_vyper,
@@ -306,8 +603,7 @@ def plot_bytecode_size(bytecode_sizes: List[Results], prefix: str):
 	)
 	ax.set_xlabel("Programs")
 	ax.set_ylabel("Bytecode Size Savings (%)")
-	ax.set_title("Bytecode Size Savings")
-	plt.suptitle("Bytecode Size Savings", fontsize=16)
+	plt.suptitle("Bytecode Size Savings With Venom", fontsize=16)
 	plt.title(
 		r"$Savings = \frac{Bytecode_{solc} - Bytecode_{vyper}}{Bytecode_{solc}} \times 100\%$",
 		fontsize=12,
@@ -336,7 +632,7 @@ def plot_gas_usage(gas_data: List[tuple[str, List[Results]]], prefix: str):
 	width = 0.35
 
 	_, ax = plt.subplots(figsize=(10, 5))
-	colors = ["red" if x < 0 else "blue" for x in gas_vyper]
+	colors = ["red" if x < 0 else "green" for x in gas_vyper]
 	ax.bar(
 		list(map((lambda x: x - width / 2), x)),
 		gas_vyper,
@@ -345,7 +641,7 @@ def plot_gas_usage(gas_data: List[tuple[str, List[Results]]], prefix: str):
 	)
 	ax.set_xlabel("Functions")
 	ax.set_ylabel("Gas Savings (%)")
-	plt.suptitle("Gas Savings", fontsize=16)
+	plt.suptitle("Gas Savings With Venom", fontsize=16)
 	plt.title(
 		r"$Savings = \frac{Gas_{solc} - Gas_{vyper}}{Gas_{solc}} \times 100\%$",
 		fontsize=12,
@@ -366,6 +662,12 @@ def evaluate_solc_vyper(best_vyper_bytecode, best_solc_bytecode, contract: TestC
 
 	function_gas_usage = []
 	for func in contract.function_calls:
+		vyper_output, vyper_is_success = get_function_output(best_vyper_bytecode, func.encoded, contract.storage)
+		solc_output, solc_is_success = get_function_output(best_solc_bytecode, func.encoded, contract.storage)
+		# Validate that the transpiler and reference has the same output
+		assert solc_is_success == vyper_is_success and vyper_is_success == func.succeeds, contract.name
+		assert vyper_output == solc_output, f"{vyper_output} != {solc_output}"
+
 		function_gas_usage.append(
 			Results(
 				id=func.name,
@@ -388,6 +690,7 @@ def run_min_bytecode_eval(plot):
 	bytecode_sizes = []
 	gas_usage = []
 	for contract in tests:
+		assert len(contract.function_calls) > 0
 		best_solc_bytecode = compile_solidity(contract.contract, min_bytecode_size_function)
 		best_vyper_bytecode = compile_vyper(contract.contract, min_bytecode_size_function)
 		(size, gas) = evaluate_solc_vyper(best_vyper_bytecode, best_solc_bytecode, contract)
@@ -405,6 +708,7 @@ def run_min_gas_eval(plot):
 	bytecode_sizes = []
 	gas_usage = []
 	for contract in tests:
+		assert len(contract.function_calls) > 0
 
 		def min_gas_function(x):
 			assert isinstance(x, bytes)

@@ -1,10 +1,2 @@
-ordered_set==4.1.0
-py-solc-x==2.0.3
-graphviz==0.20.1
-vyper @ git+https://github.com/vyperlang/vyper.git@cef84e82cd00de7eee6559b3de4f9e8d2e9580b4
-py-evm==0.10.1b2
-pysha3==1.0.2
-eth-abi==4.2.1
-# DEV DEPENDENCIES
 matplotlib==3.10.1
 pytest==8.3.5
