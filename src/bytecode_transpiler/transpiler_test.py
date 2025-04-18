@@ -465,17 +465,17 @@ def test_unchcked_math():
 	assert execute_evm(
 		bytecode,
 		transpiled,
-		encode_function_call("add(uint256,uin256)", types=["uint256", "uint256"], values=[1, 1]),
+		encode_function_call("add(uint256,uint256)", types=["uint256", "uint256"], values=[1, 1]),
 	)
 	assert execute_evm(
 		bytecode,
 		transpiled,
-		encode_function_call("sub(uint256,uin256)", types=["uint256", "uint256"], values=[1, 1]),
+		encode_function_call("sub(uint256,uint256)", types=["uint256", "uint256"], values=[1, 1]),
 	)
 	assert execute_evm(
 		bytecode,
 		transpiled,
-		encode_function_call("sumOfCubes(uint256,uin256)", types=["uint256", "uint256"], values=[1, 1]),
+		encode_function_call("sumOfCubes(uint256,uint256)", types=["uint256", "uint256"], values=[1, 1]),
 	)
 
 

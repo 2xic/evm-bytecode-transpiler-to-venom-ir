@@ -13,6 +13,7 @@ from test_utils.evm import get_function_gas_usage, get_function_output, SENDER_A
 from typing import Callable
 import matplotlib
 from typing import Dict
+import json
 
 matplotlib.use("Agg")
 plt.rcParams["font.family"] = "DejaVu Sans"
@@ -34,6 +35,13 @@ class Results:
 
 
 @dataclass
+class BytecodeResults:
+	id: str
+	vyper: bytes
+	solc: bytes
+
+
+@dataclass
 class TestCase:
 	name: str
 	contract: str
@@ -46,15 +54,15 @@ tests = [
 		"Hello",
 		contract="""
 			contract Hello {
-				function test() public returns (uint256) {
+				function hello() public returns (uint256) {
 					return 1;
 				}
 			}
 		""",
 		function_calls=[
 			FunctionCall(
-				name="test",
-				encoded=encode_function_call("test()"),
+				name="hello",
+				encoded=encode_function_call("hello()"),
 			),
 		],
 	),
@@ -157,11 +165,11 @@ tests = [
 		""",
 		function_calls=[
 			FunctionCall(
-				name="claimGift",
+				name="withdraw",
 				encoded=encode_function_call("withdraw(uint256)", types=["uint256"], values=[10]),
 			),
 			FunctionCall(
-				name="claimGift",
+				name="getBalance",
 				encoded=encode_function_call("getBalance()"),
 			),
 		],
@@ -534,6 +542,81 @@ tests = [
 			),
 		],
 	),
+	TestCase(
+		"SimpleMapping",
+		contract="""
+			contract SimpleMapping {
+				mapping(address => bool) public mappings;
+
+				function setResults(address value) public returns(address) {
+					mappings[value] = true;
+					return value;
+				}
+
+				function getResults(address value) public returns (bool) {
+					return mappings[value];
+				}
+			}
+		""",
+		function_calls=[
+			FunctionCall(
+				name="setResults",
+				encoded=encode_function_call(
+					"setResults(address)", types=["address"], values=[bytes.fromhex("ff" * 20)]
+				),
+			),
+			FunctionCall(
+				name="getResults",
+				encoded=encode_function_call(
+					"getResults(address)", types=["address"], values=[bytes.fromhex("ff" * 20)]
+				),
+			),
+		],
+	),
+	TestCase(
+		# From https://solidity-by-example.org/unchecked-math/
+		"UncheckedMath",
+		contract="""
+			contract UncheckedMath {
+				function add(uint256 x, uint256 y) external pure returns (uint256) {
+					unchecked {
+						return x + y;
+					}
+				}
+
+				function sub(uint256 x, uint256 y) external pure returns (uint256) {
+					unchecked {
+						return x - y;
+					}
+				}
+
+				function sumOfCubes(uint256 x, uint256 y) external pure returns (uint256) {
+					unchecked {
+						uint256 x3 = x * x * x;
+						uint256 y3 = y * y * y;
+
+						return x3 + y3;
+					}
+				}
+			}
+		""",
+		function_calls=[
+			FunctionCall(
+				name="add",
+				encoded=encode_function_call("add(uint256,uint256)", types=["uint256", "uint256"], values=[1, 1]),
+			),
+			FunctionCall(
+				name="sub",
+				encoded=encode_function_call("sub(uint256,uint256)", types=["uint256", "uint256"], values=[1, 1]),
+			),
+			FunctionCall(
+				name="sumOfCubes",
+				encoded=encode_function_call(
+					"sumOfCubes(uint256,uint256)", types=["uint256", "uint256"], values=[1, 1]
+				),
+			),
+		],
+	),
 ]
 
 OPTIMIZATION_RUNS = 2**31 - 1
@@ -587,12 +670,12 @@ def compile_vyper(contract: str, selector: Callable[[bytes], bytes]) -> bytes:
 	)
 
 
-def plot_bytecode_size(bytecode_sizes: List[Results], prefix: str):
+def plot_bytecode_size(bytecode_sizes: List[BytecodeResults], prefix: str):
 	x = list(range(len(bytecode_sizes)))
 	programs = [i.id for i in bytecode_sizes]
 	width = 0.35
 
-	gas_vyper = [(i.solc - i.vyper) / i.solc * 100 for i in bytecode_sizes]
+	gas_vyper = [(len(i.solc) - len(i.vyper)) / len(i.solc) * 100 for i in bytecode_sizes]
 	_, ax = plt.subplots(figsize=(10, 5))
 	colors = ["red" if x < 0 else "green" for x in gas_vyper]
 	ax.bar(
@@ -617,6 +700,15 @@ def plot_bytecode_size(bytecode_sizes: List[Results], prefix: str):
 
 	plt.tight_layout()
 	plt.savefig(f"readme/{prefix}_bytecode_size.png")
+
+	with open(f"readme/{prefix}_bytecode_size.json", "w") as file:
+		results = {}
+		for i in bytecode_sizes:
+			results[i.id] = {
+				"vyper": i.vyper.hex(),
+				"solc": i.solc.hex(),
+			}
+		json.dump(results, file, indent=4)
 	plt.close("all")
 
 
@@ -654,6 +746,19 @@ def plot_gas_usage(gas_data: List[tuple[str, List[Results]]], prefix: str):
 
 	plt.tight_layout()
 	plt.savefig(f"readme/{prefix}_gas_usage.png")
+
+	with open(f"readme/{prefix}_gas_usage.json", "w") as file:
+		results = {}
+		for contract, functions in gas_data:
+			func_gas = {}
+			for func in functions:
+				func_gas[func.id] = {
+					"vyper": func.vyper,
+					"solc": func.solc,
+				}
+			results[contract] = func_gas
+		json.dump(results, file, indent=4)
+
 	plt.close("all")
 
 
@@ -677,10 +782,10 @@ def evaluate_solc_vyper(best_vyper_bytecode, best_solc_bytecode, contract: TestC
 		)
 
 	gas_usage = (contract.name, function_gas_usage)
-	bytecode_size = Results(
+	bytecode_size = BytecodeResults(
 		id=contract.name,
-		vyper=len(best_vyper_bytecode),
-		solc=len(best_solc_bytecode),
+		solc=best_solc_bytecode,
+		vyper=best_vyper_bytecode,
 	)
 	return bytecode_size, gas_usage
 

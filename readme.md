@@ -16,19 +16,30 @@ I was working on my own compiler alternative to Solidity during the [autumn of 2
 3. We place phi nodes if multiple variables were used or there was a split in the execution flow.
 
 ## Evals
-The script used to generate these are in [evals](./src/evals/eval.py). All of these contracts are very basic and don't really reflect existing smart contracts (ERC20s, etc), that said it still gives some perspective. The Venom IR looks very promising.
+The script used to generate these are in [evals](./src/evals/eval.py). All of these contracts are very basic and don't really reflect existing smart contracts usage by the industry (ERC20s, AMMs, Valuts, etc), that said it still gives some perspective. The Venom IR looks very promising.
+
+The outputs of the transpiled bytecode is verified against its solc counterpart to verify that it's correctly transpiled and evaluated. Currently the transpilation is more or less 1:1, our job is just to transpile, we don't do any optimizing.
 
 ### Optimizing for smallest bytecode size
 For each compiler, we run the compilation at various configs and select the output from each compiler with the smallest bytecode. Then we compare the solc size and gas usage against vyper. 
 
+[JSON](./readme/min_bytecode_size_bytecode_size.json)
+
 ![bytecode sizes](./readme/min_bytecode_size_bytecode_size.png)
 
+[JSON](./readme/min_bytecode_size_gas_usage.json)
+
 ![gas usage](./readme/min_bytecode_size_gas_usage.png)
+
 
 ### Optimizing for lowest gas usage
 For each compiler, we run the compilation at the same configs as above and select the output from each compiler with the smallest total __gas__ usage. Then we compare the solc size and gas usage against vyper. 
 
+[JSON](./readme/min_gas_size_bytecode_size.json)
+
 ![bytecode sizes](./readme/min_gas_size_bytecode_size.png)
+
+[JSON](./readme/min_gas_size_gas_usage.json)
 
 ![gas usage](./readme/min_gas_size_gas_usage.png)
 

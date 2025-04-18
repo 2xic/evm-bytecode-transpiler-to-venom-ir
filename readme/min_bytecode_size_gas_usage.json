@@ -1,0 +1,130 @@
+{
+    "Hello": {
+        "hello": {
+            "vyper": 133,
+            "solc": 145
+        }
+    },
+    "Counter": {
+        "get": {
+            "vyper": 2298,
+            "solc": 2300
+        },
+        "inc": {
+            "vyper": 22255,
+            "solc": 22341
+        },
+        "dec": {
+            "vyper": 2333,
+            "solc": 2383
+        }
+    },
+    "SimpleTransientStorage": {
+        "claimGift": {
+            "vyper": 32346,
+            "solc": 32482
+        }
+    },
+    "EtherWallet": {
+        "withdraw": {
+            "vyper": 2376,
+            "solc": 2435
+        },
+        "getBalance": {
+            "vyper": 141,
+            "solc": 145
+        }
+    },
+    "SimpleAuctionSimpleVoter": {
+        "vote": {
+            "vyper": 2354,
+            "solc": 2380
+        },
+        "endVote": {
+            "vyper": 2354,
+            "solc": 2374
+        }
+    },
+    "PersonalVault": {
+        "toggleLock": {
+            "vyper": 2395,
+            "solc": 2418
+        },
+        "deposit": {
+            "vyper": 2310,
+            "solc": 2347
+        },
+        "executeTransaction": {
+            "vyper": 34815,
+            "solc": 35010
+        }
+    },
+    "InlineBabyNftContract": {
+        "mint": {
+            "vyper": 2452,
+            "solc": 2499
+        },
+        "transfer": {
+            "vyper": 2377,
+            "solc": 2451
+        }
+    },
+    "Alloc": {
+        "getBob": {
+            "vyper": 198,
+            "solc": 222
+        }
+    },
+    "Thing": {
+        "writeState": {
+            "vyper": 22262,
+            "solc": 22286
+        }
+    },
+    "Factory": {
+        "deploy": {
+            "vyper": 35259,
+            "solc": 35313
+        }
+    },
+    "Ownable": {
+        "owner": {
+            "vyper": 2261,
+            "solc": 2278
+        },
+        "renounceOwnership": {
+            "vyper": 2319,
+            "solc": 2340
+        }
+    },
+    "Proxy": {
+        "proxy": {
+            "vyper": 2312,
+            "solc": 2312
+        }
+    },
+    "SimpleMapping": {
+        "setResults": {
+            "vyper": 22471,
+            "solc": 22530
+        },
+        "getResults": {
+            "vyper": 2450,
+            "solc": 2479
+        }
+    },
+    "UncheckedMath": {
+        "add": {
+            "vyper": 215,
+            "solc": 258
+        },
+        "sub": {
+            "vyper": 264,
+            "solc": 305
+        },
+        "sumOfCubes": {
+            "vyper": 289,
+            "solc": 318
+        }
+    }
+}
