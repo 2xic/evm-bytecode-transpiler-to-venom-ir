@@ -252,6 +252,7 @@ def test_dynamic_jump():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
+	print(output_block)
 	assert are_equal_ignoring_spaces(
 		"""
 			global:
@@ -287,19 +288,19 @@ def test_dynamic_jump():
 					%47 = MUL %55, 2
 					JMP @block_0x22
 			block_0x4c:
-					%phi4 = phi @block_0x30, %33, @block_0x3e, %43
-					%phi5 = phi @block_0x30, %32, @block_0x3e, %42
-					%54 = MUL %phi4, 2
+					%phi8 = phi @block_0x30, %33, @block_0x3e, %43
+					%phi10 = phi @block_0x30, %32, @block_0x3e, %42
+					%54 = MUL %phi8, 2
 					%55 = ADD %54, 1
-					DJMP %phi5, @block_0x3a, @block_0x48
+					DJMP %phi10, @block_0x3a, @block_0x48
 			block_0x56:
 					%61 = SHL 224, 1
 					%63 = CALLDATALOAD 0
 					%64 = DIV %63, %61
 					JMP @block_0x5
 			block_0x61:
-					%phi6 = phi @block_0x2c, %37, @block_0x22, %47
-					MSTORE 0, %phi6
+					%phi12 = phi @block_0x2c, %37, @block_0x22, %47
+					MSTORE 0, %phi12
 					RETURN 0, 32
 		""",
 		str(output_block),
@@ -473,6 +474,39 @@ def test_multiple_functions():
 			return block.number;
 		}
 	}
+	"""
+	code = SolcCompiler().compile(code)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+def test_loop():
+	# From https://solidity-by-example.org/loop/
+	code = """
+		contract Loop {
+			function loop() public pure {
+				// for loop
+				for (uint256 i = 0; i < 10; i++) {
+					if (i == 3) {
+						// Skip to next iteration with continue
+						continue;
+					}
+					if (i == 5) {
+						// Exit loop with break
+						break;
+					}
+				}
+
+				// while loop
+				uint256 j;
+				while (j < 10) {
+					j++;
+				}
+			}
+		}
 	"""
 	code = SolcCompiler().compile(code)
 	program = SsaProgramBuilder(
