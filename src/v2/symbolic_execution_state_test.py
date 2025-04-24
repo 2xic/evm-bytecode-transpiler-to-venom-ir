@@ -30,7 +30,6 @@ def test_basic_ssa_program():
 		execution=ProgramExecution.create_from_bytecode(SINGLE_BLOCK),
 	)
 	output_block = program.create_program()
-	print(output_block)
 	assert are_equal_ignoring_spaces(
 		"""
 		global:

@@ -395,7 +395,8 @@ class SsaVariablesLiteral:
 	value: int
 
 	def __str__(self):
-		return f"{self.value}"
+		# TODO: enable hex output?
+		return f"{(self.value)}"
 
 
 @dataclass
@@ -592,9 +593,14 @@ class SsaVariableResolver:
 			assert found_var is not None
 
 			if (found_var == phi and isinstance(found_var, PhiFunction) or isinstance(found_var, UndefinedVariable)):
-				phi.edges.append(PhiEdge(SsaBlockReference(new_block.id), self.has_alias_variable(var, new_block, found_var)))
+				found_var = self.has_alias_variable(var, new_block, found_var)
+				if isinstance(found_var, PhiFunction):
+					found_var = SsaPhiVariablesReference(found_var.variable_name)
+				phi.edges.append(PhiEdge(SsaBlockReference(new_block.id), found_var))
 			else:
 				assert found_var != phi
+				if isinstance(found_var, PhiFunction):
+					found_var = SsaPhiVariablesReference(found_var.variable_name)
 				phi.edges.append(PhiEdge(SsaBlockReference(new_block.id), found_var))
 
 		return self.remove_trivial_phi(phi)
@@ -623,7 +629,6 @@ class SsaVariableResolver:
 		# Per the paper
 		same = None
 		for i in value.edges:
-			print((value, i))
 			if i.variable == same or i.variable == value:
 				continue
 			if same != None:
@@ -793,6 +798,7 @@ class SsaBlock:
 				and self._instruction[-1].name.strip() in END_OF_BLOCK_OPCODES
 			)
 			or isinstance(self._instruction[-1], DynamicJumpInstruction)
+			or isinstance(self._instruction[-1], JmpInstruction)
 			or isinstance(self._instruction[-1], InvalidInstruction)
 		)
 
@@ -820,7 +826,9 @@ class SsaProgram:
 					n = next_node
 					dot.edge(str(block.id), str(n.false_id), label="f", color="red")
 					dot.edge(str(block.id), str(n.true_id), label="t", color="green")
-		dot.render("output/ssa", cleanup=True)
+		output_file = "output/ssa"
+		dot.render(output_file, cleanup=True)
+		return output_file
 
 	def convert_to_vyper_ir(self):
 		wrapped = ["function global {"]
@@ -951,6 +959,52 @@ class SsaProgramBuilder:
 							)
 							print("")
 
+						"""
+						Correct the placements of Phi variables
+						- I.e reference to phi functions must happen in the previous block.
+						- Literal values must be a variable in the previous block. 
+						"""
+						if isinstance(value, PhiFunction):
+							for index, phi_edge in enumerate(value.edges):
+								if isinstance(phi_edge.variable, SsaVariablesLiteral):
+									# Need to create this in the from block
+									ssa_blocks[phi_edge.block.id].add_instruction(
+										SsaVariable(
+											f"literal_{hex(phi_edge.variable.value)}",
+											phi_edge.variable
+										)
+									)
+									value.edges[index] = PhiEdge(
+										phi_edge.block,
+										SsaVariablesReference(
+											f"literal_{hex(phi_edge.variable.value)}"
+										)
+									)
+									variable_lookups.variable_usage[str(value.edges[index].variable)] = True
+								elif isinstance(phi_edge.variable, SsaPhiVariablesReference) and "ref_" not in str(phi_edge.variable):# and phi_edge.variable.id == value.variable_name:
+									id = phi_edge.variable.id
+									ssa_blocks[phi_edge.block.id]._instruction.insert(
+										0,
+										SsaVariable(
+											f"phi_ref_{id}",
+											phi_edge.variable
+										)
+									)
+									value.edges[index] = PhiEdge(
+										phi_edge.block,
+										SsaPhiVariablesReference(
+											f"_ref_{id}",
+										)
+									)
+									variable_lookups.variable_usage[str(value.edges[index].variable)] = True
+								else:
+									variable_lookups.variable_usage[(phi_edge.variable.id)] = True								
+
+							#	elif isinstance(phi_edge.variable, SsaVariablesReference):
+							#		assert "phi" not in str(phi_edge.variable), phi_edge.variable
+							#	else:
+							#		assert "phi" not in str(phi_edge.variable), phi_edge.variable
+
 						is_jump_opcode = op.name == "JUMP" or op.name == "JUMPI"
 						if isinstance(value, PhiFunction):
 							if block.id == value.placement and value not in ssa_block.instructions:
@@ -965,6 +1019,8 @@ class SsaProgramBuilder:
 
 							for edge in value.edges:
 								if isinstance(edge.variable, PhiFunction):
+									continue
+								if isinstance(edge.variable, SsaVariablesLiteral):
 									continue
 								variable_lookups.variable_usage[edge.variable.id] = True
 							vars.append(SsaPhiVariablesReference(value.variable_name))
@@ -990,25 +1046,30 @@ class SsaProgramBuilder:
 								variable_lookups.variable_usage[value.id] = True
 					op = execution[0]
 					if op.opcode.name == "JUMP" and isinstance(vars[0], SsaPhiVariablesReference):
-						resolved = []
-						instr = None
-						for i in value.edges:
-							if isinstance(i.variable, SsaPhiVariablesReference):
-								continue
-							if isinstance(i.variable, UndefinedVariable):
-								continue
-							var = variable_lookups.resolve_variable(i.variable)
-							assert isinstance(var, SsaVariable) or isinstance(var, SsaVariablesReference)
-							var = var.value
-							assert isinstance(var, SsaVariablesLiteral) or isinstance(var, SsaBlockReference)
-							if isinstance(var, SsaBlockReference):
-								resolved.append(var)
-							else:
-								resolved.append(SsaBlockReference(var.value))
-								ref_id = variable_lookups.resolve_variable(i.variable)
-								assert isinstance(ref_id.value, SsaVariablesLiteral)
-								ref_id.value = SsaBlockReference(ref_id.value.value)
-						instr = ssa_block.add_instruction(DynamicJumpInstruction(arguments=[vars[0]], target_blocks=resolved))
+						if len(ssa_block.outgoing) > 1:
+							resolved = []
+							instr = None
+							for i in value.edges:
+								if isinstance(i.variable, SsaPhiVariablesReference):
+									continue
+								if isinstance(i.variable, UndefinedVariable):
+									continue
+								var = variable_lookups.resolve_variable(i.variable)
+								assert isinstance(var, SsaVariable) or isinstance(var, SsaVariablesReference)
+								var = var.value
+								assert isinstance(var, SsaVariablesLiteral) or isinstance(var, SsaBlockReference)
+								if isinstance(var, SsaBlockReference):
+									resolved.append(var)
+								else:
+									resolved.append(SsaBlockReference(var.value))
+									ref_id = variable_lookups.resolve_variable(i.variable)
+									assert isinstance(ref_id.value, SsaVariablesLiteral)
+									ref_id.value = SsaBlockReference(ref_id.value.value)
+							instr = ssa_block.add_instruction(DynamicJumpInstruction(arguments=[vars[0]], target_blocks=resolved))
+						else:
+							instr = ssa_block.add_instruction(JmpInstruction(
+								[SsaBlockReference(ssa_block.outgoing[0].to_id)]
+							))
 					elif op.opcode.name == "INVALID":
 						# Invalid is not considering terminating in Vyper so just make it into a revert.
 						instr = ssa_block.add_instruction(InvalidInstruction())
@@ -1025,6 +1086,51 @@ class SsaProgramBuilder:
 				ssa_block.add_instruction(StopInstruction())
 
 			blocks.append(ssa_block)
+
+		# Add any missing phi functions.
+		if True:
+			for i in variable_lookups.ssa_resolver.current_definition:
+				variable = variable_lookups.ssa_resolver.current_definition[i]
+				for block in variable:
+					var = variable[block]
+					if isinstance(var, PhiFunction):
+						ssa_block = ssa_blocks[var.placement]
+						if var not in ssa_block.instructions:
+							for index, phi_edge in enumerate(var.edges):
+								if isinstance(phi_edge.variable, SsaVariablesLiteral):
+									# Need to create this in the from block
+									ssa_blocks[phi_edge.block.id].add_instruction(
+										SsaVariable(
+											f"literal_{hex(phi_edge.variable.var)}",
+											phi_edge.variable
+										)
+									)
+									var.edges[index] = PhiEdge(
+										phi_edge.block,
+										SsaVariablesReference(
+											f"literal_{hex(phi_edge.variable.var)}"
+										)
+									)
+									variable_lookups.variable_usage[str(var.edges[index].variable)] = True
+								elif isinstance(phi_edge.variable, SsaPhiVariablesReference) and "phi_ref" not in str(phi_edge.variable):
+									id = phi_edge.variable.id
+									ssa_blocks[phi_edge.block.id]._instruction.insert(
+										0,
+										SsaVariable(
+											f"phi_ref_{id}",
+											phi_edge.variable
+										)
+									)
+									var.edges[index] = PhiEdge(
+										phi_edge.block,
+										SsaPhiVariablesReference(
+											f"_ref_{id}",
+										)
+									)
+									variable_lookups.variable_usage[str(var.edges[index].variable)] = True
+								else:
+									variable_lookups.variable_usage[(phi_edge.variable.id)] = True								
+							ssa_block.add_instruction(var)
 
 		if True:
 			for block in blocks:
