@@ -81,13 +81,6 @@ class ProgramTrace:
 	def __init__(self):
 		self.traces: List[ExecutionTrace] = []
 
-	def get_block_traces(self, block_id) -> List[ExecutionTrace]:
-		traces: List[ExecutionTrace] = []
-		for i in self.traces:
-			if block_id in i.blocks:
-				traces.append(i)
-		return traces
-
 	def fork(self, current: Optional[ExecutionTrace]):
 		# Each time there is a conditional block we need to fork the trace.
 		self.traces.append(ExecutionTrace(deepcopy(current.blocks) if current is not None else []))
@@ -363,14 +356,22 @@ class SsaVariablesReference:
 
 @dataclass(frozen=True)
 class SsaPhiVariablesReference(SsaVariablesReference):
+	id: str
+
 	def __str__(self):
 		return f"%phi{self.id}"
+
 
 @dataclass(frozen=True)
 class UndefinedVariable(SsaVariablesReference):
 	def __str__(self):
-		return f"Undefined"
-	
+		return "Undefined"
+
+
+@dataclass(frozen=True)
+class UndefinedVariableReference(SsaVariablesReference):
+	pass
+
 
 @dataclass(frozen=True)
 class SsaBlockReference:
@@ -383,15 +384,7 @@ class SsaBlockReference:
 
 
 @dataclass(frozen=True)
-class SsaBlockTag:
-	id: str
-
-	def __str__(self):
-		return f"@{self.id}"
-
-
-@dataclass(frozen=True)
-class SsaVariablesLiteral:
+class SsaLiteralValue:
 	value: int
 
 	def __str__(self):
@@ -415,8 +408,6 @@ class SsaInstruction:
 
 	def __str__(self):
 		variables = ", ".join(map(str, self.arguments))
-#		if self.get_name() == "JMP":
-#			assert isinstance(self.arguments[0], SsaBlockReference)
 		if self.get_name() == "JNZ":
 			assert len(self.arguments) == 3
 		elif "LOG" in self.name:
@@ -433,6 +424,10 @@ class SsaInstruction:
 			return "JNZ"
 		else:
 			return self.name
+
+	@property
+	def is_terminating(self):
+		return self.name.strip() in END_OF_BLOCK_OPCODES
 
 
 @dataclass
@@ -468,14 +463,10 @@ class InvalidInstruction(BaseSsaInstruction):
 @dataclass
 class SsaVariable:
 	variable_name: str
-	value: Union[SsaInstruction, SsaVariablesLiteral]
-	comment: str = ""
+	value: Union[SsaInstruction, SsaLiteralValue]
 
 	def __str__(self):
-		if len(self.comment):
-			return f"%{self.variable_name} = {self.value}; variable name {self.comment}"
-		else:
-			return f"%{self.variable_name} = {self.value}"
+		return f"%{self.variable_name} = {self.value}"
 
 
 @dataclass(frozen=True)
@@ -485,6 +476,12 @@ class PhiEdge:
 
 	def __str__(self):
 		return f"{self.block}, {self.variable}"
+
+	def replace_variable(self, variable):
+		return PhiEdge(
+			self.block,
+			variable,
+		)
 
 
 @dataclass(frozen=True)
@@ -502,12 +499,9 @@ class PhiFunctionNameless:
 class PhiFunction(PhiFunctionNameless):
 	variable_name: str
 	placement: Optional[int] = None
-	comment: str = ""
 
 	def __str__(self):
 		reference = SsaPhiVariablesReference(self.variable_name)
-		if len(self.comment) > 0:
-			return f"{reference} = phi {', '.join(map(str, self.edges))} ; {self.comment}"
 		return f"{reference} = phi {', '.join(map(str, self.edges))}"
 
 
@@ -523,10 +517,13 @@ class VariableDefinitionPlacement:
 	block_id: int
 	references: PhiFunction
 
+
 """
 TODO: for now this is a bit too simplistic, but its role is to make sure that variables from different paths
 are unified into a single variable. This way we can use the ssa algorithm proposed in https://c9x.me/compile/bib/braun13cc.pdf
 """
+
+
 class Unifier:
 	def __init__(self):
 		# t0 -> (t1, t2)
@@ -550,7 +547,7 @@ class SsaVariableResolver:
 		self.var_lookup_id = {}
 		# Alias variables
 		self.unifier = Unifier()
-	
+
 	def write_variable(self, variable_name: str, block: CfgBasicBlock, value):
 		if variable_name not in self.current_definition:
 			self.current_definition[variable_name] = {}
@@ -579,20 +576,17 @@ class SsaVariableResolver:
 		return value
 
 	def add_phi_operands(self, phi: PhiFunction, var, current_block: CfgBasicBlock):
-		assert type(var) == str
-		print(hex(current_block.id), list(map(hex, current_block.incoming)))
+		assert isinstance(var, str)
 		for parent in current_block.incoming:
-			# TODO: this shouldn't really happen ... 
+			# TODO: this shouldn't really happen ...
 			if parent not in self.blocks:
 				continue
 			new_block: CfgBasicBlock = self.blocks[parent]
 			assert new_block.id != current_block.id
-			print(hex(parent))
 			found_var = self.read_variable(var, new_block)
-			print((var, found_var))
 			assert found_var is not None
 
-			if (found_var == phi and isinstance(found_var, PhiFunction) or isinstance(found_var, UndefinedVariable)):
+			if found_var == phi and isinstance(found_var, PhiFunction) or isinstance(found_var, UndefinedVariable):
 				found_var = self.has_alias_variable(var, new_block, found_var)
 				if isinstance(found_var, PhiFunction):
 					found_var = SsaPhiVariablesReference(found_var.variable_name)
@@ -604,37 +598,37 @@ class SsaVariableResolver:
 				phi.edges.append(PhiEdge(SsaBlockReference(new_block.id), found_var))
 
 		return self.remove_trivial_phi(phi)
-	
+
 	"""
 	Check if there is an alias variable that can be used to 
 	"""
+
 	def has_alias_variable(self, variable: str, block: CfgBasicBlock, found_var):
 		for i in self.unifier.reverse_variable_alias[variable]:
 			if block.id in self.current_definition.get(i, {}):
 				assert self.current_definition[i][block.id] is not None
 				return self.current_definition[i][block.id]
 		return found_var
-	
+
 	def remove_trivial_phi(self, value: PhiFunction):
 		values = OrderedSet()
-		print(value)
 		for i in value.edges:
 			if isinstance(i.variable, UndefinedVariable):
 				continue
 			values.add(i.variable)
 		if len(values) == 1 and (isinstance(values[0], SsaVariablesReference) and values[0].id in self.constant_vars):
-			return SsaVariablesLiteral(self.constant_vars[values[0].id])
-		elif len(values) == 1 and isinstance(values[0], SsaVariablesLiteral):
+			return SsaLiteralValue(self.constant_vars[values[0].id])
+		elif len(values) == 1 and isinstance(values[0], SsaLiteralValue):
 			return values[0]
 		# Per the paper
 		same = None
 		for i in value.edges:
 			if i.variable == same or i.variable == value:
 				continue
-			if same != None:
+			if same is not None:
 				return value
 			same = i.variable
-		if same == None:
+		if same is None:
 			same = UndefinedVariable("1")
 		# TODO: should update all usage of the variable now.
 		# (might not be needed as all our references as object references)
@@ -657,7 +651,6 @@ class VariableResolver:
 		self.ssa_resolver = SsaVariableResolver(blocks)
 
 	def add_variable(self, pc, block, value, var_id):
-		# assert pc not in self.variables or self.variables[pc] == value
 		var_id = self.register_variable_id(pc)
 		assert not isinstance(value, int)
 		self.variables[var_id] = VariableDefinition(value, block, var_id)
@@ -674,8 +667,8 @@ class VariableResolver:
 			return self.pc_to_id[pc]
 		return self.pc_to_id[pc]
 
-	def resolve_variable(self, id: SsaVariablesReference):
-		results = self.variables[id.id].variable
+	def resolve_variable(self, var: SsaVariablesReference):
+		results = self.variables[var.id].variable
 		return results
 
 
@@ -698,7 +691,14 @@ class SsaBlock:
 
 	@property
 	def instructions(self):
-		return sorted(self._instruction, key=lambda x: 0 if isinstance(x, PhiFunction) else 1)
+		order = {
+			PhiFunction: 0,
+			DynamicJumpInstruction: float("inf"),
+			JmpInstruction: float("inf"),
+			StopInstruction: float("inf"),
+		}
+		order = sorted(self._instruction, key=lambda x: order.get(type(x), 1))
+		return order
 
 	def __str__(self):
 		return "\n".join([f"{self.name}:"] + list(map(lambda x: f"\t{x}", self.instructions)))
@@ -789,14 +789,11 @@ class SsaBlock:
 		else:
 			self._instruction.append(SsaInstruction(opcode.name, operands))
 		return self._instruction[-1]
-	
+
 	@property
 	def is_terminating(self):
 		return (
-			(
-				isinstance(self._instruction[-1], SsaInstruction)
-				and self._instruction[-1].name.strip() in END_OF_BLOCK_OPCODES
-			)
+			(isinstance(self._instruction[-1], SsaInstruction) and self._instruction[-1].is_terminating)
 			or isinstance(self._instruction[-1], DynamicJumpInstruction)
 			or isinstance(self._instruction[-1], JmpInstruction)
 			or isinstance(self._instruction[-1], InvalidInstruction)
@@ -861,53 +858,134 @@ class BlockInformation:
 		return {i.id: i for i in self.blocks}
 
 
-@dataclass
-class SsaProgramBuilder:
-	execution: ProgramExecution
-
-	def create_program(self) -> "SsaProgram":
-		blocks: List[SsaBlock] = []
-		DEBUG = False
-
-		cfg_blocks = {i.id: i for i in self.execution.cfg_blocks}
-		variable_lookups = VariableResolver(cfg_blocks)
-		ssa_blocks: Dict[int, SsaBlock] = {}
-		for block in self.execution.cfg_blocks:
+class SsaBlocksRegistry:
+	def __init__(self, execution: ProgramExecution):
+		self.execution = execution
+		self.blocks: List[SsaBlock] = []
+		self.cfg_blocks = {i.id: i for i in execution.cfg_blocks}
+		self.variable_lookups = VariableResolver(self.cfg_blocks)
+		self.ssa_blocks: Dict[int, SsaBlock] = {}
+		for block in execution.cfg_blocks:
 			name = "global" if block.id == 0 else f"block_{hex(block.id)}"
-			ssa_blocks[block.id] = SsaBlock(
+			self.ssa_blocks[block.id] = SsaBlock(
 				id=block.id,
 				name=name,
 				outgoing=block.outgoing,
 				incoming=block.incoming,
 			)
+		self._register_values()
+
+	def _register_values(self):
 		# Register the values
-		for block in self.execution.cfg_blocks:
+		for block in self.cfg_blocks.values():
 			for op in block.opcodes:
 				# TODO: I don't love this ....
-				var_id = variable_lookups.register_variable_id(op.pc)
+				var_id = self.variable_lookups.register_variable_id(op.pc)
 				exec = self.execution.execution[op.pc][0]
 				if isinstance(op, PushOpcode):
-					variable_lookups.ssa_resolver.constant_vars[var_id] = op.value()
-					variable_lookups.add_variable(
+					self.variable_lookups.ssa_resolver.constant_vars[var_id] = op.value()
+					self.variable_lookups.add_variable(
 						op.pc,
 						block,
-						SsaVariable(var_id, SsaVariablesLiteral(op.value())),
+						SsaVariable(var_id, SsaLiteralValue(op.value())),
 						var_id,
 					)
-					# variable_lookups.ssa_resolver.write_variable(
-					# 	var_id,
-					# 	block,
-					# 	SsaVariable(var_id, SsaVariablesLiteral(op.value()))
-					# )
-				variable_lookups.ssa_resolver.var_lookup_id[var_id] = exec.variable_name
-				variable_lookups.ssa_resolver.var_lookup_id[exec.variable_name] = var_id
+				self.variable_lookups.ssa_resolver.var_lookup_id[var_id] = exec.variable_name
+				self.variable_lookups.ssa_resolver.var_lookup_id[exec.variable_name] = var_id
 
 				# TODO: need to think more about how this is laid out
-				variable_lookups.ssa_resolver.write_variable(
+				self.variable_lookups.ssa_resolver.write_variable(
 					exec.variable_name,
 					block,
 					SsaVariablesReference(var_id),
 				)
+
+	def optimize(self, optimize):
+		if not optimize:
+			return
+		for block in self.blocks:
+			ops = []
+			for op in block.instructions:
+				if (
+					# TODO: maybe we instead should use variable usage counters?
+					isinstance(op, SsaVariable)
+					and op.variable_name not in self.variable_lookups.variable_usage
+					and isinstance(op.value, SsaLiteralValue)
+				):
+					ops.append(op)
+			for var in ops:
+				block.remove_instruction(var)
+
+	def replace_phi_node(self, value: PhiFunction):
+		if not isinstance(value, PhiFunction):
+			return None
+
+		"""
+		Correct the placements of Phi variables
+		- I.e reference to phi functions must happen in the previous block.
+		- Literal values must be a variable in the previous block. 
+		"""
+		for index, phi_edge in enumerate(value.edges):
+			if isinstance(phi_edge.variable, SsaLiteralValue):
+				# Need to create this in the from block
+				var_nid = f"literal_{hex(phi_edge.variable.value)}"
+				var = SsaVariable(var_nid, phi_edge.variable)
+				self.ssa_blocks[phi_edge.block.id].add_instruction(var)
+				variable = SsaVariablesReference(var_nid)
+				value.edges[index] = phi_edge.replace_variable(variable)
+				self.variable_lookups.variable_usage[str(variable)] = True
+				# Register the new value as a real variable
+				self.variable_lookups.variables[var.variable_name] = VariableDefinition(var, value.placement, var_nid)
+
+			elif isinstance(phi_edge.variable, UndefinedVariable):
+				base_name = f"undefined_{hex(phi_edge.block.id)}"
+				# Need to create this in the from block
+				var = SsaVariable(base_name, SsaLiteralValue(-1))
+				if var not in self.ssa_blocks[phi_edge.block.id]._instruction:
+					self.ssa_blocks[phi_edge.block.id]._instruction.insert(0, var)
+				value.edges[index] = phi_edge.replace_variable(SsaVariablesReference(base_name))
+				self.variable_lookups.variable_usage[str(value.edges[index].variable)] = True
+				# Register the new value as a real variable
+				self.variable_lookups.variables[var.variable_name] = VariableDefinition(var, value.placement, base_name)
+			elif isinstance(phi_edge.variable, SsaPhiVariablesReference) and "ref_" not in str(
+				phi_edge.variable
+			):  # and phi_edge.variable.id == value.variable_name:
+				id = phi_edge.variable.id
+				base_name = f"_ref_{id}_{hex(phi_edge.block.id)}"
+				var = SsaVariable(f"phi{base_name}", phi_edge.variable)
+				self.ssa_blocks[phi_edge.block.id]._instruction.insert(0, var)
+				value.edges[index] = phi_edge.replace_variable(
+					SsaPhiVariablesReference(
+						f"{base_name}",
+					)
+				)
+				self.variable_lookups.variable_usage[str(value.edges[index].variable)] = True
+				# Register the new value as a real variable
+				self.variable_lookups.variables[base_name] = VariableDefinition(var, value.placement, base_name)
+			else:
+				self.variable_lookups.variable_usage[(phi_edge.variable.id)] = True
+
+	def add_missing_phi_nodes(self):
+		for i in self.variable_lookups.ssa_resolver.current_definition:
+			variable = self.variable_lookups.ssa_resolver.current_definition[i]
+			for block in variable:
+				var = variable[block]
+				if isinstance(var, PhiFunction):
+					ssa_block = self.ssa_blocks[var.placement]
+					if var not in ssa_block.instructions:
+						self.replace_phi_node(var)
+						ssa_block.add_instruction(var)
+
+
+@dataclass
+class SsaProgramBuilder:
+	execution: ProgramExecution
+
+	def create_program(self, optimize=True) -> "SsaProgram":
+		registry = SsaBlocksRegistry(self.execution)
+		variable_lookups = registry.variable_lookups
+		ssa_blocks = registry.ssa_blocks
+		blocks = registry.blocks
 
 		for block in self.execution.cfg_blocks:
 			ssa_block = ssa_blocks[block.id]
@@ -916,168 +994,78 @@ class SsaProgramBuilder:
 					continue
 				elif op.name == "JUMPDEST":
 					continue
-
 				execution = self.execution.execution[op.pc]
-
 				# Check each execution
 				if op.is_push_opcode:
 					# Single unique trace, no need to look for phi nodes
-					op = execution[0]
-					instr = ssa_block.add_instruction_from_state(op, variable_lookups)
-					if isinstance(instr, SsaVariable) and DEBUG:
-						instr.comment = f"{op.variable_name}"
+					ssa_block.add_instruction_from_state(execution[0], variable_lookups)
 				else:
 					# Multiple executions, might need a phi node.
-					i = execution[0]
-
+					first_execution = execution[0]
+					opcode_name = first_execution.opcode.name
 					vars = []
-					for index, operands in enumerate(i.operands):
+					for index, operands in enumerate(first_execution.operands):
 						# TODO: this should be handled better, it's not very easy to see what is happening here.
-						if isinstance(operands, int) and op.name == "JUMPI":
+						if isinstance(operands, int) and opcode_name == "JUMPI":
 							vars.append(SsaBlockReference(operands))
 							continue
 
-						variables_defined = OrderedSet()
-						for i in execution:
-							variables_defined.add(i.operands[index].variable_name)
+						variables_defined = OrderedSet([i.operands[index].variable_name for i in execution])
 						variable_lookups.ssa_resolver.unifier.register_alias(
-							variables_defined[0],
-							variables_defined[1:]
+							variables_defined[0], variables_defined[1:]
 						)
+						value = variable_lookups.ssa_resolver.read_variable(operands.variable_name, block)
+						registry.replace_phi_node(value)
 
-						value = variable_lookups.ssa_resolver.read_variable(
-							operands.variable_name,
-							block
-						)
-
-						if isinstance(value, PhiFunction) and DEBUG:
-							value = PhiFunction(
-								value.edges,
-								value.variable_name,
-								value.placement,
-								comment=", ".join(variables_defined)
-							)
-							print("")
-
-						"""
-						Correct the placements of Phi variables
-						- I.e reference to phi functions must happen in the previous block.
-						- Literal values must be a variable in the previous block. 
-						"""
+						is_jump_opcode = opcode_name == "JUMP" or opcode_name == "JUMPI"
 						if isinstance(value, PhiFunction):
-							for index, phi_edge in enumerate(value.edges):
-								if isinstance(phi_edge.variable, SsaVariablesLiteral):
-									# Need to create this in the from block
-									ssa_blocks[phi_edge.block.id].add_instruction(
-										SsaVariable(
-											f"literal_{hex(phi_edge.variable.value)}",
-											phi_edge.variable
-										)
-									)
-									value.edges[index] = PhiEdge(
-										phi_edge.block,
-										SsaVariablesReference(
-											f"literal_{hex(phi_edge.variable.value)}"
-										)
-									)
-									variable_lookups.variable_usage[str(value.edges[index].variable)] = True
-								elif isinstance(phi_edge.variable, SsaPhiVariablesReference) and "ref_" not in str(phi_edge.variable):# and phi_edge.variable.id == value.variable_name:
-									id = phi_edge.variable.id
-									ssa_blocks[phi_edge.block.id]._instruction.insert(
-										0,
-										SsaVariable(
-											f"phi_ref_{id}",
-											phi_edge.variable
-										)
-									)
-									value.edges[index] = PhiEdge(
-										phi_edge.block,
-										SsaPhiVariablesReference(
-											f"_ref_{id}",
-										)
-									)
-									variable_lookups.variable_usage[str(value.edges[index].variable)] = True
-								else:
-									variable_lookups.variable_usage[(phi_edge.variable.id)] = True								
-
-							#	elif isinstance(phi_edge.variable, SsaVariablesReference):
-							#		assert "phi" not in str(phi_edge.variable), phi_edge.variable
-							#	else:
-							#		assert "phi" not in str(phi_edge.variable), phi_edge.variable
-
-						is_jump_opcode = op.name == "JUMP" or op.name == "JUMPI"
-						if isinstance(value, PhiFunction):
-							if block.id == value.placement and value not in ssa_block.instructions:
+							if block.id == value.placement:
 								ssa_block.add_instruction(value)
-							elif value.placement in ssa_blocks:
-								# TODO: I don't want this extra check, should be handled automatically
-								reference_block = ssa_blocks[value.placement]
-								if value not in reference_block.instructions:
-									reference_block.add_instruction(value)
-							else:
-								raise Exception("Block is unknown atm")
-
-							for edge in value.edges:
-								if isinstance(edge.variable, PhiFunction):
-									continue
-								if isinstance(edge.variable, SsaVariablesLiteral):
-									continue
-								variable_lookups.variable_usage[edge.variable.id] = True
 							vars.append(SsaPhiVariablesReference(value.variable_name))
 						elif (
 							isinstance(value, SsaVariablesReference)
 							and value.id in variable_lookups.ssa_resolver.constant_vars
 						):
-							if is_jump_opcode:
-								vars.append(
-									SsaBlockReference(variable_lookups.ssa_resolver.constant_vars[value.id]),
-								)
-							else:
-								vars.append(
-									SsaVariablesLiteral(variable_lookups.ssa_resolver.constant_vars[value.id]),
-								)
-						elif is_jump_opcode and isinstance(value, SsaVariablesLiteral):
-							vars.append(
-								SsaBlockReference(value.value)
+							instruction = (
+								(SsaBlockReference(variable_lookups.ssa_resolver.constant_vars[value.id]))
+								if is_jump_opcode
+								else (SsaLiteralValue(variable_lookups.ssa_resolver.constant_vars[value.id]))
 							)
+							vars.append(instruction)
+						elif is_jump_opcode and isinstance(value, SsaLiteralValue):
+							vars.append(SsaBlockReference(value.value))
 						else:
 							vars.append(value)
-							if not isinstance(value, SsaVariablesLiteral):
+							if not isinstance(value, SsaLiteralValue):
 								variable_lookups.variable_usage[value.id] = True
-					op = execution[0]
-					if op.opcode.name == "JUMP" and isinstance(vars[0], SsaPhiVariablesReference):
+					# Insert the instruction with the parameters
+					if opcode_name == "JUMP" and isinstance(vars[0], SsaPhiVariablesReference):
 						if len(ssa_block.outgoing) > 1:
 							resolved = []
-							instr = None
 							for i in value.edges:
-								if isinstance(i.variable, SsaPhiVariablesReference):
-									continue
-								if isinstance(i.variable, UndefinedVariable):
-									continue
 								var = variable_lookups.resolve_variable(i.variable)
 								assert isinstance(var, SsaVariable) or isinstance(var, SsaVariablesReference)
 								var = var.value
-								assert isinstance(var, SsaVariablesLiteral) or isinstance(var, SsaBlockReference)
+
 								if isinstance(var, SsaBlockReference):
 									resolved.append(var)
-								else:
+								elif isinstance(var, SsaLiteralValue):
 									resolved.append(SsaBlockReference(var.value))
 									ref_id = variable_lookups.resolve_variable(i.variable)
-									assert isinstance(ref_id.value, SsaVariablesLiteral)
+									assert isinstance(ref_id.value, SsaLiteralValue)
 									ref_id.value = SsaBlockReference(ref_id.value.value)
-							instr = ssa_block.add_instruction(DynamicJumpInstruction(arguments=[vars[0]], target_blocks=resolved))
+								else:
+									raise Exception("Unknown value")
+							ssa_block.add_instruction(
+								DynamicJumpInstruction(arguments=[vars[0]], target_blocks=resolved)
+							)
 						else:
-							instr = ssa_block.add_instruction(JmpInstruction(
-								[SsaBlockReference(ssa_block.outgoing[0].to_id)]
-							))
-					elif op.opcode.name == "INVALID":
+							ssa_block.add_instruction(JmpInstruction([SsaBlockReference(ssa_block.outgoing[0].to_id)]))
+					elif opcode_name == "INVALID":
 						# Invalid is not considering terminating in Vyper so just make it into a revert.
-						instr = ssa_block.add_instruction(InvalidInstruction())
+						ssa_block.add_instruction(InvalidInstruction())
 					else:
-						instr = ssa_block.add_instruction_from_vars(op, vars, variable_lookups)
-					if isinstance(instr, SsaVariable) and DEBUG:
-						instr.comment = f"{op.variable_name}"
-					
+						ssa_block.add_instruction_from_vars(first_execution, vars, variable_lookups)
 
 			# Checks to make sure the block is correctly terminating.
 			if not ssa_block.is_terminating and block.next is not None:
@@ -1088,63 +1076,8 @@ class SsaProgramBuilder:
 			blocks.append(ssa_block)
 
 		# Add any missing phi functions.
-		if True:
-			for i in variable_lookups.ssa_resolver.current_definition:
-				variable = variable_lookups.ssa_resolver.current_definition[i]
-				for block in variable:
-					var = variable[block]
-					if isinstance(var, PhiFunction):
-						ssa_block = ssa_blocks[var.placement]
-						if var not in ssa_block.instructions:
-							for index, phi_edge in enumerate(var.edges):
-								if isinstance(phi_edge.variable, SsaVariablesLiteral):
-									# Need to create this in the from block
-									ssa_blocks[phi_edge.block.id].add_instruction(
-										SsaVariable(
-											f"literal_{hex(phi_edge.variable.var)}",
-											phi_edge.variable
-										)
-									)
-									var.edges[index] = PhiEdge(
-										phi_edge.block,
-										SsaVariablesReference(
-											f"literal_{hex(phi_edge.variable.var)}"
-										)
-									)
-									variable_lookups.variable_usage[str(var.edges[index].variable)] = True
-								elif isinstance(phi_edge.variable, SsaPhiVariablesReference) and "phi_ref" not in str(phi_edge.variable):
-									id = phi_edge.variable.id
-									ssa_blocks[phi_edge.block.id]._instruction.insert(
-										0,
-										SsaVariable(
-											f"phi_ref_{id}",
-											phi_edge.variable
-										)
-									)
-									var.edges[index] = PhiEdge(
-										phi_edge.block,
-										SsaPhiVariablesReference(
-											f"_ref_{id}",
-										)
-									)
-									variable_lookups.variable_usage[str(var.edges[index].variable)] = True
-								else:
-									variable_lookups.variable_usage[(phi_edge.variable.id)] = True								
-							ssa_block.add_instruction(var)
-
-		if True:
-			for block in blocks:
-				ops = []
-				for op in block.instructions:
-					if (
-						# TODO: maybe we instead should use variable usage counters?
-						isinstance(op, SsaVariable)
-						and op.variable_name not in variable_lookups.variable_usage
-						and isinstance(op.value, SsaVariablesLiteral)
-					):
-						ops.append(op)
-				for var in ops:
-					block.remove_instruction(var)
+		registry.add_missing_phi_nodes()
+		registry.optimize(optimize)
 
 		return SsaProgram(
 			blocks,
@@ -1170,4 +1103,6 @@ if __name__ == "__main__":
 	group.add_argument("--bytecode", type=str, help="Bytecode as a hex string")
 
 	args = parser.parse_args()
-	print(transpile_bytecode(bytes.fromhex(args.bytecode.lstrip("0x"))))
+	code = bytes.fromhex(args.bytecode.lstrip("0x"))
+	print(code)
+	print(transpile_bytecode(code))

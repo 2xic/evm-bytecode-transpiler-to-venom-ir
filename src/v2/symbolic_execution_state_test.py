@@ -482,6 +482,7 @@ def test_multiple_functions():
 	code = output_block.compile()
 	assert isinstance(code, bytes)
 
+
 def test_loop():
 	# From https://solidity-by-example.org/loop/
 	code = """
@@ -512,5 +513,50 @@ def test_loop():
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
 	output_block = program.create_program()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+
+def test_constants():
+	# From https://solidity-by-example.org/constants/
+	code = """
+	contract Constants {
+		// coding convention to uppercase constant variables
+		address public constant MY_ADDRESS =
+			0x777788889999AaAAbBbbCcccddDdeeeEfFFfCcCc;
+		uint256 public constant MY_UINT = 123;
+
+		function test() public returns (uint256) {
+			return MY_UINT;
+		}
+	}
+	"""
+	code = SolcCompiler().compile(code)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+
+@pytest.mark.skip("Currently fails to compile")
+def test_simple_mapping():
+	code = """
+	contract Hello {
+		mapping(uint256 => uint256) public value;
+
+		function test() public returns (uint256) {
+			value[0] = 1;
+			return value[0];
+		}
+	}
+	"""
+	code = SolcCompiler().compile(code)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program()
+	output_block.create_plot()
 	code = output_block.compile()
 	assert isinstance(code, bytes)
