@@ -27,7 +27,7 @@ class CompilerSettings:
 	via_ir: bool = False
 	optimizer_enabled: bool = False
 	optimization_runs: int = 200
-	solc_version: str = "0.8.28"
+	solc_version: str = "0.8.29"
 
 	def optimize(self, optimization_runs=200, via_ir=True):
 		self.via_ir = via_ir
@@ -91,6 +91,13 @@ class SolcCompiler:
 				"optimizer": {
 					"enabled": settings.optimizer_enabled,
 					"runs": settings.optimization_runs,
+					#"details": {
+					#	"deduplicate": False,
+					#	"constantOptimizer": False,
+					#	"orderLiterals": False,
+					#	"cse": False,
+					#	"inliner": False,
+					#}
 				},
 				"viaIR": settings.via_ir,
 			},

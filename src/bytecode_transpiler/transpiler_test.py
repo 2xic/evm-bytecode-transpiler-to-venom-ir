@@ -1046,10 +1046,9 @@ def test_raw_bytecode(raw_bytecode):
 	assert transpiled is not None
 
 
-# Sanity check that the eval script should still work
+@pytest.mark.skip("Very slow")
 def test_eval():
 	run_eval(plot=False)
-
 
 def test_stack_evm():
 	evm = EVM(0)

@@ -1,7 +1,0 @@
-ordered_set==4.1.0
-py-solc-x==2.0.3
-graphviz==0.20.1
-vyper @ git+https://github.com/vyperlang/vyper.git@8d2fd72f2dfabd1872d54bfce0f7fe76ace55f4a
-py-evm==0.10.1b2
-pysha3==1.0.2
-eth-abi==4.2.1

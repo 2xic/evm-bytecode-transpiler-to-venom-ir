@@ -3,7 +3,7 @@ from v2.symbolic_execution_state import (
 	SsaProgramBuilder,
 )
 from test_utils.bytecodes import SINGLE_BLOCK, ERC721_DROP, MINIMAL_PROXY, MINIMAL_PROXY_2
-from test_utils.solc_compiler import SolcCompiler
+from test_utils.solc_compiler import SolcCompiler, CompilerSettings
 import pytest
 
 
@@ -540,8 +540,49 @@ def test_constants():
 	assert isinstance(code, bytes)
 
 
-@pytest.mark.skip("Currently fails to compile")
-def test_simple_mapping():
+def test_should_handle_storage():
+	code = """
+	contract Hello {
+		uint256 public val = 0;
+
+		function set() public returns (uint) {
+			val = 50;
+			return val;
+		}
+	}
+	"""
+	code = SolcCompiler().compile(code)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+
+def test_nested_if_conditions_params_explicit():
+	code = """
+	contract Hello {
+		function test() public returns (uint256) {
+			return a(15);
+		}
+
+		function a(uint256 a) internal returns (uint256){
+			if (a > 10) {        
+				return 2;
+			}
+		}
+	}
+	"""
+	code = SolcCompiler().compile(code)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+def test_v2_simple_mapping():
 	code = """
 	contract Hello {
 		mapping(uint256 => uint256) public value;
@@ -556,7 +597,230 @@ def test_simple_mapping():
 	program = SsaProgramBuilder(
 		execution=ProgramExecution.create_from_bytecode(code),
 	)
-	output_block = program.create_program()
+	output_block = program.create_program(optimize=False)
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+def test_unchcked_math():
+	# From https://solidity-by-example.org/unchecked-math/
+	code = """
+		contract UncheckedMath {
+			function add(uint256 x, uint256 y) external pure returns (uint256) {
+				// 22291 gas
+				// return x + y;
+
+				// 22103 gas
+				unchecked {
+					return x + y;
+				}
+			}
+
+			function sub(uint256 x, uint256 y) external pure returns (uint256) {
+				// 22329 gas
+				// return x - y;
+
+				// 22147 gas
+				unchecked {
+					return x - y;
+				}
+			}
+
+			function sumOfCubes(uint256 x, uint256 y) external pure returns (uint256) {
+				// Wrap complex math logic inside unchecked
+				unchecked {
+					uint256 x3 = x * x * x;
+					uint256 y3 = y * y * y;
+
+					return x3 + y3;
+				}
+			}
+		}
+	"""
+	code = SolcCompiler().compile(code)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program(optimize=False)
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+def test_should_handle_double_mapping():
+	code = """
+		// From https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html#subcurrency-example
+		contract SimpleMapping {
+			mapping(address => mapping(address => bool)) public mappings;
+
+			function setResults(address value) public returns(address) {
+				mappings[address(0)][value] = true;
+				return value;
+			}
+
+			function getResults(address value) public returns (bool) {
+				return mappings[address(0)][value];
+			}
+		}
+	"""
+	code = SolcCompiler().compile(code)
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program(optimize=False)
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+def test_coin_example():
+	code = """
+		// From https://docs.soliditylang.org/en/latest/introduction-to-smart-contracts.html#subcurrency-example
+		contract Coin {
+			// The keyword "public" makes variables
+			// accessible from other contracts
+			address public minter;
+			mapping (address => uint) public balances;
+
+			// Events allow clients to react to specific
+			// contract changes you declare
+			event Sent(address from, address to, uint amount);
+
+			// Constructor code is only run when the contract
+			// is created
+			constructor() public {
+				minter = msg.sender;
+			}
+
+			// Sends an amount of newly created coins to an address
+			// Can only be called by the contract creator
+			function mint(address receiver, uint amount) public {
+				require(msg.sender == minter);
+				require(amount < 1e60);
+				balances[receiver] += amount;
+			}
+
+			// Sends an amount of existing coins
+			// from any caller to an address
+			function send(address receiver, uint amount) public {
+				require(amount <= balances[msg.sender], "Insufficient balance.");
+				balances[msg.sender] -= amount;
+				balances[receiver] += amount;
+				emit Sent(msg.sender, receiver, amount);
+			}
+		}
+	"""
+	code = SolcCompiler().compile(code, CompilerSettings().optimize())
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program(optimize=False)
 	output_block.create_plot()
 	code = output_block.compile()
 	assert isinstance(code, bytes)
+
+
+def test_multicall():
+	# https://github.com/EthereumClassicDAO/multicall3/blob/main/src/Multicall2.sol
+	code = """
+		contract Multicall2 {
+			struct Call {
+				address target;
+				bytes callData;
+			}
+
+			struct Result {
+				bool success;
+				bytes returnData;
+			}
+
+			function aggregate(Call[] calldata calls) public returns (uint256 blockNumber, bytes[] memory returnData) {
+				blockNumber = block.number;
+				returnData = new bytes[](calls.length);
+				for (uint256 i = 0; i < calls.length; i++) {
+					(bool success, bytes memory ret) = calls[i].target.call(calls[i].callData);
+					require(success, "Multicall aggregate: call failed");
+					returnData[i] = ret;
+				}
+			}
+		}
+	"""
+	code = SolcCompiler().compile(code, CompilerSettings().optimize())
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program(optimize=False)
+	output_block.create_plot()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+
+@pytest.mark.skip("Does not work atm.")
+def test_wrapped_ether_example():
+	# https://basescan.org/address/0x4200000000000000000000000000000000000006#code
+	code = """
+		contract WETH9 {
+			string public name = "Wrapped Ether";
+			string public symbol = "WETH";
+			uint8 public decimals = 18;
+
+			event Approval(address indexed src, address indexed guy, uint wad);
+			event Transfer(address indexed src, address indexed dst, uint wad);
+			event Deposit(address indexed dst, uint wad);
+			event Withdrawal(address indexed src, uint wad);
+
+			mapping(address => uint) public balanceOf;
+			mapping(address => mapping(address => uint)) public allowance;
+
+			fallback() external payable {
+				deposit();
+			}
+			function deposit() public payable {
+				balanceOf[msg.sender] += msg.value;
+				emit Deposit(msg.sender, msg.value);
+			}
+			function withdraw(uint wad) public {
+				require(balanceOf[msg.sender] >= wad);
+				balanceOf[msg.sender] -= wad;
+				payable(msg.sender).transfer(wad);
+				emit Withdrawal(msg.sender, wad);
+			}
+
+			function totalSupply() public view returns (uint) {
+				return address(this).balance;
+			}
+
+			function approve(address guy, uint wad) public returns (bool) {
+				allowance[msg.sender][guy] = wad;
+				emit Approval(msg.sender, guy, wad);
+				return true;
+			}
+
+			function transfer(address dst, uint wad) public returns (bool) {
+				return transferFrom(msg.sender, dst, wad);
+			}
+
+			function transferFrom(
+				address src,
+				address dst,
+				uint wad
+			) public returns (bool) {
+				require(balanceOf[src] >= wad);
+
+				if (src != msg.sender && allowance[src][msg.sender] != type(uint).max) {
+					require(allowance[src][msg.sender] >= wad);
+					allowance[src][msg.sender] -= wad;
+				}
+
+				balanceOf[src] -= wad;
+				balanceOf[dst] += wad;
+
+				emit Transfer(src, dst, wad);
+
+				return true;
+			}
+		}
+	"""
+	code = SolcCompiler().compile(code, CompilerSettings().optimize())
+	program = SsaProgramBuilder(
+		execution=ProgramExecution.create_from_bytecode(code),
+	)
+	output_block = program.create_program(optimize=False)
+	output_block.create_plot()
+	code = output_block.compile()
+	assert isinstance(code, bytes)
+

@@ -2,7 +2,7 @@
     "Hello": {
         "hello": {
             "vyper": 133,
-            "solc": 145
+            "solc": 139
         }
     },
     "Counter": {
@@ -62,11 +62,11 @@
     "InlineBabyNftContract": {
         "mint": {
             "vyper": 2452,
-            "solc": 2499
+            "solc": 2422
         },
         "transfer": {
             "vyper": 2377,
-            "solc": 2451
+            "solc": 2401
         }
     },
     "Alloc": {

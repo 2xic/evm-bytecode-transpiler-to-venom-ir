@@ -363,7 +363,18 @@ class SsaPhiVariablesReference(SsaVariablesReference):
 
 
 @dataclass(frozen=True)
+class SsaBlockPhiVariablesReference(SsaPhiVariablesReference):
+	pass
+
+
+@dataclass(frozen=True)
 class UndefinedVariable(SsaVariablesReference):
+	def __str__(self):
+		return "Undefined"
+
+
+@dataclass(frozen=True)
+class UndefinedBlock(SsaVariablesReference):
 	def __str__(self):
 		return "Undefined"
 
@@ -375,12 +386,20 @@ class UndefinedVariableReference(SsaVariablesReference):
 
 @dataclass(frozen=True)
 class SsaBlockReference:
-	id: int
+	id: Union[str, int]
 
 	def __str__(self):
-		if self.id == 0:
-			return "@global"
-		return f"@block_{hex(self.id)}"
+		if type(self.id) == int:
+			if self.id == 0:
+				return "@global"
+			return f"@block_{hex(self.id)}"
+		else:
+			return f"@{self.id}"
+
+@dataclass(frozen=True)
+class UnknownValue:
+	def __str__(self):
+		return "?"
 
 
 @dataclass(frozen=True)
@@ -391,6 +410,10 @@ class SsaLiteralValue:
 		# TODO: enable hex output?
 		return f"{(self.value)}"
 
+
+@dataclass(frozen=True)
+class UnusedValue(SsaLiteralValue):
+	pass
 
 @dataclass
 class BaseSsaInstruction:
@@ -596,7 +619,6 @@ class SsaVariableResolver:
 				if isinstance(found_var, PhiFunction):
 					found_var = SsaPhiVariablesReference(found_var.variable_name)
 				phi.edges.append(PhiEdge(SsaBlockReference(new_block.id), found_var))
-
 		return self.remove_trivial_phi(phi)
 
 	"""
@@ -633,14 +655,6 @@ class SsaVariableResolver:
 		# TODO: should update all usage of the variable now.
 		# (might not be needed as all our references as object references)
 		return same
-
-	# TODO: figure out why it can't be done part of the original removal phase.
-	def post_remove_trivial_phi(self, var):
-		if isinstance(var, PhiFunction):
-			variable_ids = OrderedSet([i.variable.id for i in var.edges])
-			if len(variable_ids) == 1:
-				return var.edges[0].variable
-		return var
 
 
 class VariableResolver:
@@ -697,7 +711,15 @@ class SsaBlock:
 			JmpInstruction: float("inf"),
 			StopInstruction: float("inf"),
 		}
-		order = sorted(self._instruction, key=lambda x: order.get(type(x), 1))
+		def score_instructions(instr):
+			nonlocal order
+			if isinstance(instr, SsaInstruction) and instr.name.upper() == "JUMP":
+				return float('inf')
+			elif isinstance(instr, SsaInstruction) and instr.name.upper() == "JUMPI":
+				return float('inf')
+			return order.get(type(instr), 1)
+
+		order = sorted(self._instruction, key=score_instructions)
 		return order
 
 	def __str__(self):
@@ -792,7 +814,7 @@ class SsaBlock:
 
 	@property
 	def is_terminating(self):
-		return (
+		return len(self._instruction) and (
 			(isinstance(self._instruction[-1], SsaInstruction) and self._instruction[-1].is_terminating)
 			or isinstance(self._instruction[-1], DynamicJumpInstruction)
 			or isinstance(self._instruction[-1], JmpInstruction)
@@ -936,26 +958,25 @@ class SsaBlocksRegistry:
 				self.variable_lookups.variable_usage[str(variable)] = True
 				# Register the new value as a real variable
 				self.variable_lookups.variables[var.variable_name] = VariableDefinition(var, value.placement, var_nid)
-
 			elif isinstance(phi_edge.variable, UndefinedVariable):
 				base_name = f"undefined_{hex(phi_edge.block.id)}"
 				# Need to create this in the from block
-				var = SsaVariable(base_name, SsaLiteralValue(-1))
+				var = SsaVariable(base_name, UnusedValue(-1))
 				if var not in self.ssa_blocks[phi_edge.block.id]._instruction:
 					self.ssa_blocks[phi_edge.block.id]._instruction.insert(0, var)
 				value.edges[index] = phi_edge.replace_variable(SsaVariablesReference(base_name))
 				self.variable_lookups.variable_usage[str(value.edges[index].variable)] = True
 				# Register the new value as a real variable
 				self.variable_lookups.variables[var.variable_name] = VariableDefinition(var, value.placement, base_name)
-			elif isinstance(phi_edge.variable, SsaPhiVariablesReference) and "ref_" not in str(
-				phi_edge.variable
-			):  # and phi_edge.variable.id == value.variable_name:
+			elif isinstance(phi_edge.variable, SsaPhiVariablesReference) and not isinstance(
+				phi_edge.variable, SsaBlockPhiVariablesReference
+			):
 				id = phi_edge.variable.id
 				base_name = f"_ref_{id}_{hex(phi_edge.block.id)}"
 				var = SsaVariable(f"phi{base_name}", phi_edge.variable)
 				self.ssa_blocks[phi_edge.block.id]._instruction.insert(0, var)
 				value.edges[index] = phi_edge.replace_variable(
-					SsaPhiVariablesReference(
+					SsaBlockPhiVariablesReference(
 						f"{base_name}",
 					)
 				)
@@ -1039,23 +1060,29 @@ class SsaProgramBuilder:
 							if not isinstance(value, SsaLiteralValue):
 								variable_lookups.variable_usage[value.id] = True
 					# Insert the instruction with the parameters
-					if opcode_name == "JUMP" and isinstance(vars[0], SsaPhiVariablesReference):
+					if opcode_name == "JUMP":
 						if len(ssa_block.outgoing) > 1:
-							resolved = []
 							for i in value.edges:
 								var = variable_lookups.resolve_variable(i.variable)
 								assert isinstance(var, SsaVariable) or isinstance(var, SsaVariablesReference)
 								var = var.value
 
 								if isinstance(var, SsaBlockReference):
-									resolved.append(var)
+									pass
+								elif isinstance(var, UnusedValue):
+									ref_id = variable_lookups.resolve_variable(i.variable)
+									assert isinstance(ref_id.value, SsaLiteralValue)
+									ref_id.value = SsaBlockReference("fallback")
 								elif isinstance(var, SsaLiteralValue):
-									resolved.append(SsaBlockReference(var.value))
 									ref_id = variable_lookups.resolve_variable(i.variable)
 									assert isinstance(ref_id.value, SsaLiteralValue)
 									ref_id.value = SsaBlockReference(ref_id.value.value)
 								else:
-									raise Exception("Unknown value")
+									# Unknown value, should we raise an error instead?
+									pass
+							resolved = []
+							for i in block.outgoing:
+								resolved.append(SsaBlockReference(i.to_id))
 							ssa_block.add_instruction(
 								DynamicJumpInstruction(arguments=[vars[0]], target_blocks=resolved)
 							)
@@ -1088,9 +1115,8 @@ def transpile_bytecode(raw_bytecode):
 	program = SsaProgramBuilder(
 		execution=ProgramExecution.create_from_bytecode(raw_bytecode),
 	)
-	output_block = program.create_program()
+	output_block = program.create_program(optimize=False)
 	output_block.create_plot()
-	print(output_block.convert_to_vyper_ir())
 	code = output_block.compile()
 	return code
 
@@ -1104,5 +1130,9 @@ if __name__ == "__main__":
 
 	args = parser.parse_args()
 	code = bytes.fromhex(args.bytecode.lstrip("0x"))
-	print(code)
-	print(transpile_bytecode(code))
+	input_solc = float(len(code))
+	venom_bytecode = transpile_bytecode(code)
+	print(f"Solc : {len(code)}")
+	print(f"Venom : {len(venom_bytecode)}")
+	print(f"Delta {(input_solc - float(len(venom_bytecode))) / float(input_solc) * 100}")
+	print(venom_bytecode.hex())
